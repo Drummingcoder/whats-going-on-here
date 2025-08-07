@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Countdown Lock",
+  "version": "2.0",
+  "description": "Adds a countdown timer to specified sites and locks them with a password when time runs out.",
+  "permissions": ["storage", "activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Countdown Lock Settings"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "host_permissions": ["<all_urls>"]
+}

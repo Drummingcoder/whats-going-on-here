@@ -1,0 +1,550 @@
+.countdown-lock-timer {
+  position: fixed !important;
+  top: 15px !important;
+  right: 15px !important;
+  background: linear-gradient(135deg, #f39c12, #e67e22) !important;
+  color: #1a1a2e !important;
+  padding: 8px 16px !important;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  z-index: 2147483647 !important;
+  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.3) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(10px) !important;
+  transition: all 0.3s ease !important;
+  cursor: pointer !important;
+  user-select: none !important;
+}
+
+.countdown-lock-timer:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 16px rgba(243, 156, 18, 0.4) !important;
+  background: linear-gradient(135deg, #e67e22, #d35400) !important;
+}
+
+.countdown-lock-controls {
+  position: fixed !important;
+  top: 15px !important;
+  right: 15px !important;
+  background: rgba(26, 26, 46, 0.95) !important;
+  backdrop-filter: blur(10px) !important;
+  border: 2px solid #f39c12 !important;
+  border-radius: 8px !important;
+  padding: 12px !important;
+  z-index: 2147483647 !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
+  color: #ffffff !important;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+  animation: slideIn 0.3s ease-out !important;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.timer-control-content {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+}
+
+.dismiss-btn:hover {
+  background: #e74c3c !important;
+  transform: scale(1.1) !important;
+}
+
+.countdown-lock-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(0, 0, 0, 0.95)) !important;
+  backdrop-filter: blur(10px) !important;
+  color: #ffffff !important;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  z-index: 2147483647 !important;
+  animation: fadeIn 0.5s ease-out !important;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.countdown-lock-box {
+  background: linear-gradient(135deg, #1a1a2e, #16213e) !important;
+  padding: 40px !important;
+  border: 2px solid #f39c12 !important;
+  border-radius: 16px !important;
+  text-align: center !important;
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(243, 156, 18, 0.2) !important;
+  max-width: 450px !important;
+  width: 90% !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.countdown-lock-box.small {
+  max-width: 350px !important;
+  padding: 30px !important;
+}
+
+.countdown-lock-box::before {
+  content: '' !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: linear-gradient(45deg, transparent, rgba(243, 156, 18, 0.1), transparent) !important;
+  pointer-events: none !important;
+}
+
+.countdown-lock-box h2, .countdown-lock-box h3 {
+  margin: 0 0 20px 0 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  color: #f39c12 !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+.countdown-lock-box h3 {
+  font-size: 20px !important;
+}
+
+.countdown-lock-box h4 {
+  margin: 20px 0 10px 0 !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: #e0e0e0 !important;
+}
+
+.countdown-lock-box p {
+  margin: 0 0 20px 0 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+  color: #e0e0e0 !important;
+}
+
+.input-group {
+  display: flex !important;
+  gap: 10px !important;
+  margin-bottom: 15px !important;
+  align-items: stretch !important;
+}
+
+.countdown-lock-box input {
+  flex: 1 !important;
+  padding: 12px 16px !important;
+  font-size: 16px !important;
+  border: 2px solid #3a3a5c !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  font-family: inherit !important;
+  transition: all 0.3s ease !important;
+  outline: none !important;
+}
+
+.countdown-lock-box input:focus {
+  border-color: #f39c12 !important;
+  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3) !important;
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+.countdown-lock-box input::placeholder {
+  color: #888 !important;
+}
+
+.countdown-lock-box button {
+  padding: 12px 24px !important;
+  background: linear-gradient(135deg, #f39c12, #e67e22) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  font-family: inherit !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: #1a1a2e !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  white-space: nowrap !important;
+  min-width: 80px !important;
+}
+
+.countdown-lock-box button:hover {
+  background: linear-gradient(135deg, #e67e22, #d35400) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4) !important;
+}
+
+.countdown-lock-box button:active {
+  transform: translateY(0) !important;
+}
+
+.cancel-btn {
+  background: rgba(231, 76, 60, 0.8) !important;
+  color: #ffffff !important;
+  margin-top: 10px !important;
+  width: 100% !important;
+}
+
+.cancel-btn:hover {
+  background: #e74c3c !important;
+}
+
+.error-message {
+  color: #e74c3c !important;
+  font-size: 14px !important;
+  margin: 10px 0 !important;
+  font-weight: 500 !important;
+  animation: shake 0.5s ease-in-out !important;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.lock-timer {
+  margin-top: 20px !important;
+  padding: 12px !important;
+  background: rgba(243, 156, 18, 0.1) !important;
+  border: 1px solid rgba(243, 156, 18, 0.3) !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  color: #f39c12 !important;
+  font-weight: 500 !important;
+}
+
+.unlock-options {
+  margin: 25px 0 !important;
+  text-align: left !important;
+}
+
+.option-group {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  margin-top: 10px !important;
+}
+
+.radio-option {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  padding: 12px !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 2px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 8px !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+}
+
+.radio-option:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(243, 156, 18, 0.5) !important;
+}
+
+.radio-option input[type="radio"] {
+  width: 18px !important;
+  height: 18px !important;
+  margin: 0 !important;
+  accent-color: #f39c12 !important;
+}
+
+.radio-option span {
+  font-size: 14px !important;
+  color: #e0e0e0 !important;
+  font-weight: 500 !important;
+}
+
+.radio-option:has(input:checked) {
+  background: rgba(243, 156, 18, 0.1) !important;
+  border-color: #f39c12 !important;
+}
+
+.radio-option:has(input:checked) span {
+  color: #f39c12 !important;
+}
+
+/* Responsive design */
+@media (max-width: 480px) {
+  .countdown-lock-timer {
+    top: 10px !important;
+    right: 10px !important;
+    font-size: 12px !important;
+    padding: 6px 12px !important;
+  }
+
+  .countdown-lock-controls {
+    top: 10px !important;
+    right: 10px !important;
+    padding: 8px !important;
+  }
+
+  .timer-control-content {
+    flex-direction: column !important;
+    gap: 6px !important;
+  }
+
+  .countdown-lock-box {
+    padding: 30px 20px !important;
+    margin: 20px !important;
+  }
+
+  .countdown-lock-box.small {
+    padding: 20px 15px !important;
+  }
+
+  .countdown-lock-box h2 {
+    font-size: 20px !important;
+  }
+
+  .countdown-lock-box h3 {
+    font-size: 18px !important;
+  }
+
+  .input-group {
+    flex-direction: column !important;
+  }
+
+  .countdown-lock-box button {
+    width: 100% !important;
+  }
+
+  .option-group {
+    gap: 8px !important;
+  }
+
+  .radio-option {
+    padding: 10px !important;
+  }
+
+.control-btn {
+  padding: 6px 12px !important;
+  border: none !important;
+  border-radius: 4px !important;
+  font-family: inherit !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.2s ease !important;
+}
+
+.start-btn {
+  background: linear-gradient(135deg, #27ae60, #2ecc71) !important;
+  color: #ffffff !important;
+}
+
+.start-btn:hover {
+  background: linear-gradient(135deg, #2ecc71, #27ae60) !important;
+  transform: translateY(-1px) !important;
+}
+
+.dismiss-btn {
+  background: rgba(231, 76, 60, 0.8) !important;
+  color: #ffffff !important;
+  width: 24px !important;
+  height: 24px !important;
+  padding: 0 !important;
+  display: none !important;
+}
+
+.countdown-lock-timer {
+  position: fixed !important;
+  top: 15px !important;
+  right: 15px !important;
+  background: linear-gradient(135deg, #f39c12, #e67e22) !important;
+  color: #1a1a2e !important;
+  padding: 8px 16px !important;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  border-radius: 8px !important;
+  z-index: 2147483647 !important;
+  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.3) !important;
+  border: 2px solid rgba(255, 255, 255, 0.2) !important;
+  backdrop-filter: blur(10px) !important;
+  transition: all 0.3s ease !important;
+  cursor: default !important;
+  user-select: none !important;
+}
+
+.countdown-lock-timer:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 16px rgba(243, 156, 18, 0.4) !important;
+}
+
+.countdown-lock-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: linear-gradient(135deg, rgba(26, 26, 46, 0.95), rgba(0, 0, 0, 0.95)) !important;
+  backdrop-filter: blur(10px) !important;
+  color: #ffffff !important;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  z-index: 2147483647 !important;
+  animation: fadeIn 0.5s ease-out !important;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.countdown-lock-box {
+  background: linear-gradient(135deg, #1a1a2e, #16213e) !important;
+  padding: 40px !important;
+  border: 2px solid #f39c12 !important;
+  border-radius: 16px !important;
+  text-align: center !important;
+  box-shadow: 
+    0 20px 40px rgba(0, 0, 0, 0.5),
+    0 0 30px rgba(243, 156, 18, 0.2) !important;
+  max-width: 400px !important;
+  width: 90% !important;
+  position: relative !important;
+  overflow: hidden !important;
+}
+
+.countdown-lock-box::before {
+  content: '' !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  background: linear-gradient(45deg, transparent, rgba(243, 156, 18, 0.1), transparent) !important;
+  pointer-events: none !important;
+}
+
+.countdown-lock-box h2 {
+  margin: 0 0 20px 0 !important;
+  font-size: 24px !important;
+  font-weight: 700 !important;
+  color: #f39c12 !important;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.3) !important;
+}
+
+.countdown-lock-box p {
+  margin: 0 0 20px 0 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+  color: #e0e0e0 !important;
+}
+
+.input-group {
+  display: flex !important;
+  gap: 10px !important;
+  margin-bottom: 15px !important;
+  align-items: stretch !important;
+}
+
+.countdown-lock-box input {
+  flex: 1 !important;
+  padding: 12px 16px !important;
+  font-size: 16px !important;
+  border: 2px solid #3a3a5c !important;
+  border-radius: 8px !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+  font-family: inherit !important;
+  transition: all 0.3s ease !important;
+  outline: none !important;
+}
+
+.countdown-lock-box input:focus {
+  border-color: #f39c12 !important;
+  box-shadow: 0 0 10px rgba(243, 156, 18, 0.3) !important;
+  background: rgba(255, 255, 255, 0.15) !important;
+}
+
+.countdown-lock-box input::placeholder {
+  color: #888 !important;
+}
+
+.countdown-lock-box button {
+  padding: 12px 24px !important;
+  background: linear-gradient(135deg, #f39c12, #e67e22) !important;
+  border: none !important;
+  border-radius: 8px !important;
+  font-family: inherit !important;
+  font-size: 16px !important;
+  font-weight: 600 !important;
+  color: #1a1a2e !important;
+  cursor: pointer !important;
+  transition: all 0.3s ease !important;
+  white-space: nowrap !important;
+  min-width: 80px !important;
+}
+
+.countdown-lock-box button:hover {
+  background: linear-gradient(135deg, #e67e22, #d35400) !important;
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4) !important;
+}
+
+.countdown-lock-box button:active {
+  transform: translateY(0) !important;
+}
+
+.error-message {
+  color: #e74c3c !important;
+  font-size: 14px !important;
+  margin: 10px 0 !important;
+  font-weight: 500 !important;
+  animation: shake 0.5s ease-in-out !important;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.lock-timer {
+  margin-top: 20px !important;
+  padding: 12px !important;
+  background: rgba(243, 156, 18, 0.1) !important;
+  border: 1px solid rgba(243, 156, 18, 0.3) !important;
+  border-radius: 8px !important;
+  font-size: 14px !important;
+  color: #f39c12 !important;
+  font-weight: 500 !important;
+}
+}

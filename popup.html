@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Countdown Lock Settings</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e, #16213e);
+      color: #ffffff;
+      width: 350px;
+      min-height: 400px;
+      padding: 0;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #f39c12, #e67e22);
+      color: #1a1a2e;
+      padding: 20px;
+      text-align: center;
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    .content {
+      padding: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 20px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #e0e0e0;
+      font-size: 14px;
+    }
+
+    textarea, input[type="number"], input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      border: 2px solid #3a3a5c;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      font-family: inherit;
+      font-size: 14px;
+      transition: all 0.3s ease;
+      resize: vertical;
+    }
+
+    textarea {
+      min-height: 80px;
+      max-height: 120px;
+    }
+
+    textarea:focus, input:focus {
+      outline: none;
+      border-color: #f39c12;
+      box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
+      background: rgba(255, 255, 255, 0.15);
+    }
+
+    input::placeholder, textarea::placeholder {
+      color: #888;
+    }
+
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 25px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px 20px;
+      border: none;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #f39c12, #e67e22);
+      color: #1a1a2e;
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #e67e22, #d35400);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(243, 156, 18, 0.4);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border: 2px solid #3a3a5c;
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.2);
+      border-color: #f39c12;
+    }
+
+    .help-text {
+      font-size: 12px;
+      color: #888;
+      margin-top: 5px;
+      line-height: 1.4;
+    }
+
+    .status {
+      padding: 10px;
+      border-radius: 6px;
+      margin-bottom: 15px;
+      font-size: 13px;
+      text-align: center;
+      display: none;
+    }
+
+    .status.success {
+      background: rgba(39, 174, 96, 0.2);
+      border: 1px solid rgba(39, 174, 96, 0.3);
+      color: #2ecc71;
+    }
+
+    .status.error {
+      background: rgba(231, 76, 60, 0.2);
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      color: #e74c3c;
+    }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, #3a3a5c, transparent);
+      margin: 20px 0;
+    }
+
+    .password-section {
+      background: rgba(243, 156, 18, 0.1);
+      border: 1px solid rgba(243, 156, 18, 0.3);
+      border-radius: 8px;
+      padding: 15px;
+    }
+
+    .password-note {
+      background: rgba(52, 152, 219, 0.1);
+      border: 1px solid rgba(52, 152, 219, 0.3);
+      border-radius: 6px;
+      padding: 10px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: #3498db;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    🔒 Countdown Lock Settings
+  </div>
+  
+  <div class="content">
+    <div id="status" class="status"></div>
+    
+    <div class="form-group">
+      <label for="sites">
+        Monitored Sites
+        <span style="color: #f39c12;">*</span>
+      </label>
+      <textarea 
+        id="sites" 
+        placeholder="Enter one domain per line:&#10;youtube.com&#10;twitter.com&#10;facebook.com"
+      ></textarea>
+      <div class="help-text">
+        Enter website domains you want to monitor. The timer will run on these sites only.
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="duration">
+        Timer Duration (minutes)
+        <span style="color: #f39c12;">*</span>
+      </label>
+      <input 
+        type="number" 
+        id="duration" 
+        min="1" 
+        max="480" 
+        value="5" 
+        placeholder="5"
+      />
+      <div class="help-text">
+        How long you can browse before the site gets locked (1-480 minutes).
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="form-group password-section">
+      <label for="password">Change Password</label>
+      <input 
+        type="password" 
+        id="password" 
+        placeholder="Enter new password (optional)"
+      />
+      <div class="password-note">
+        💡 Leave empty to keep current password. You'll be prompted to set one on first use.
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button type="button" id="reset" class="btn-secondary">Reset All</button>
+      <button type="button" id="save" class="btn-primary">Save Settings</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
