@@ -384,31 +384,25 @@
           placeholder="Enter one domain per line:&#10;youtube.com&#10;twitter.com&#10;facebook.com"
         ></textarea>
         <div class="form-help">
-          Enter website domains you want to monitor and restrict access to.
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label" for="timerDuration">
-          Default Timer Duration (minutes)
-        </label>
-        <input 
-          type="number" 
-          class="form-input"
-          id="timerDuration" 
-          min="1" 
-          max="480" 
-          value="5" 
-          placeholder="5"
-        />
-        <div class="form-help">
-          How long you can browse before sites get locked (1-480 minutes).
+          Enter website domains you want to track time for.
         </div>
       </div>
 
       <div class="button-group">
         <button type="button" id="resetSettings" class="btn btn-secondary">Reset All</button>
         <button type="button" id="saveSettings" class="btn btn-primary">Save Settings</button>
+      </div>
+      
+      <div class="divider"></div>
+      
+      <div class="form-group">
+        <label class="form-label">Developer Tools</label>
+        <button type="button" id="resetSession" class="btn btn-secondary" style="width: 100%;">
+          🔄 Reset Today's Browsing Session
+        </button>
+        <div class="form-help">
+          Clear all time tracking data for today (for development/testing purposes).
+        </div>
       </div>
     </div>
   </div>

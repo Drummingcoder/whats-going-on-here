@@ -3,9 +3,9 @@ class ExtensionManager {
     this.elements = {
       // Settings elements
       sitesTextarea: document.getElementById("monitoredSites"),
-      durationInput: document.getElementById("timerDuration"),
       saveBtn: document.getElementById("saveSettings"),
       resetBtn: document.getElementById("resetSettings"),
+      resetSessionBtn: document.getElementById("resetSession"),
       status: document.getElementById("statusMessage"),
       
       // UI elements
@@ -34,31 +34,50 @@ class ExtensionManager {
   }
 
   loadSettings() {
-    chrome.storage.sync.get(['allowedSites', 'timerDuration'], (result) => {
+    chrome.storage.sync.get(['allowedSites'], (result) => {
       if (result.allowedSites && Array.isArray(result.allowedSites)) {
         this.elements.sitesTextarea.value = result.allowedSites.join('\n');
-      }
-      if (result.timerDuration) {
-        this.elements.durationInput.value = result.timerDuration;
       }
     });
   }
 
   loadTimeData() {
-    // Get time tracking data
-    chrome.runtime.sendMessage({ action: "getTimeData" }, (response) => {
-      if (response && response.timeData) {
-        this.displayStatsOverview(response.timeData);
-        this.createPieChart(response.timeData);
-      }
-    });
-    
-    // Get session history for block schedule
+    // Get session history for both charts and stats - this ensures consistency
     chrome.runtime.sendMessage({ action: "getSessionHistory" }, (response) => {
       if (response && response.sessionHistory) {
+        const today = new Date().toDateString();
+        const todaySessions = response.sessionHistory[today] || [];
+        
+        // Calculate aggregated data from sessions for consistency
+        const aggregatedData = this.calculateAggregatedTimeFromSessions(todaySessions);
+        
+        this.displayStatsOverview(aggregatedData, todaySessions.length > 0);
+        this.createPieChart(aggregatedData);
         this.createBlockSchedule(response.sessionHistory);
+      } else {
+        // No session history, show empty state
+        this.displayStatsOverview({}, false);
+        this.elements.pieChartPlaceholder.innerHTML = '<div style="color: #94a3b8;">No data for today yet</div>';
+        this.elements.schedulePlaceholder.innerHTML = '<div style="color: #94a3b8;">No activity recorded today</div>';
       }
     });
+  }
+
+  calculateAggregatedTimeFromSessions(sessions) {
+    const aggregated = {};
+    
+    // First consolidate sessions to avoid double counting
+    const consolidatedSessions = this.consolidateSessions(sessions);
+    
+    consolidatedSessions.forEach(session => {
+      if (!aggregated[session.domain]) {
+        aggregated[session.domain] = 0;
+      }
+      aggregated[session.domain] += session.duration;
+    });
+    
+    console.log('Aggregated time data:', aggregated); // Debug log
+    return aggregated;
   }
 
   attachEventListeners() {
@@ -70,12 +89,9 @@ class ExtensionManager {
     // Settings save/reset
     this.elements.saveBtn.addEventListener("click", () => this.saveSettings());
     this.elements.resetBtn.addEventListener("click", () => this.resetSettings());
+    this.elements.resetSessionBtn.addEventListener("click", () => this.resetTodaysSession());
     
-    // Keyboard shortcuts
-    this.elements.durationInput.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") this.saveSettings();
-    });
-
+    // Auto-resize textarea
     this.elements.sitesTextarea.addEventListener("input", () => {
       this.autoResizeTextarea(this.elements.sitesTextarea);
     });
@@ -87,37 +103,46 @@ class ExtensionManager {
     this.elements.toggleSettingsBtn.textContent = isActive ? 'Close Settings' : 'Settings';
   }
 
-  displayStatsOverview(timeData) {
-    const today = new Date().toDateString();
-    const todayData = timeData[today] || {};
+  displayStatsOverview(aggregatedData, hasData) {
+    if (!hasData) {
+      this.elements.todayTotal.textContent = "0m";
+      this.elements.sitesVisited.textContent = "0";
+      return;
+    }
     
     let totalTime = 0;
-    const sitesCount = Object.keys(todayData).length;
+    const sitesCount = Object.keys(aggregatedData).length;
     
-    for (const domain in todayData) {
-      totalTime += todayData[domain];
+    for (const domain in aggregatedData) {
+      totalTime += aggregatedData[domain];
     }
     
     this.elements.todayTotal.textContent = this.formatTime(totalTime);
     this.elements.sitesVisited.textContent = sitesCount;
   }
 
-  createPieChart(timeData) {
-    const today = new Date().toDateString();
-    const todayData = timeData[today] || {};
-    
-    if (Object.keys(todayData).length === 0) {
+  createPieChart(aggregatedData) {
+    if (Object.keys(aggregatedData).length === 0) {
       this.elements.pieChartPlaceholder.innerHTML = '<div style="color: #94a3b8;">No data for today yet</div>';
       return;
     }
 
-    // Prepare data for pie chart
-    const sortedData = Object.entries(todayData)
+    // Prepare data for pie chart with better precision
+    const sortedData = Object.entries(aggregatedData)
       .sort(([,a], [,b]) => b - a)
       .slice(0, 8); // Top 8 sites
 
-    const labels = sortedData.map(([domain]) => domain);
-    const data = sortedData.map(([,time]) => Math.round(time / 60000)); // Convert to minutes
+    console.log('Pie chart data before processing:', sortedData); // Debug log
+
+    const labels = sortedData.map(([domain]) => this.getSiteName(domain));
+    const data = sortedData.map(([,time]) => {
+      const minutes = time / 60000; // Convert to minutes with decimal precision
+      return Math.max(0.1, Math.round(minutes * 10) / 10); // Minimum 0.1 min, round to 1 decimal
+    });
+    
+    console.log('Pie chart labels:', labels);
+    console.log('Pie chart data (minutes):', data); // Debug log
+    
     const colors = [
       '#667eea', '#764ba2', '#f093fb', '#f5576c',
       '#4facfe', '#00f2fe', '#43e97b', '#38f9d7'
@@ -175,6 +200,44 @@ class ExtensionManager {
     });
   }
 
+  getSiteName(domain) {
+    // Map common domains to their display names
+    const siteNames = {
+      'google.com': 'Google',
+      'youtube.com': 'YouTube',
+      'facebook.com': 'Facebook',
+      'twitter.com': 'Twitter',
+      'instagram.com': 'Instagram',
+      'linkedin.com': 'LinkedIn',
+      'reddit.com': 'Reddit',
+      'github.com': 'GitHub',
+      'stackoverflow.com': 'Stack Overflow',
+      'wikipedia.org': 'Wikipedia',
+      'amazon.com': 'Amazon',
+      'netflix.com': 'Netflix',
+      'spotify.com': 'Spotify',
+      'discord.com': 'Discord',
+      'slack.com': 'Slack',
+      'zoom.us': 'Zoom',
+      'docs.google.com': 'Google Docs',
+      'drive.google.com': 'Google Drive',
+      'gmail.com': 'Gmail',
+      'outlook.com': 'Outlook',
+      'teams.microsoft.com': 'Microsoft Teams',
+      'office.com': 'Microsoft Office',
+      'notion.so': 'Notion',
+      'figma.com': 'Figma',
+      'trello.com': 'Trello',
+      'asana.com': 'Asana',
+      'gemini.google.com': 'Gemini',
+      'chatgpt.com': 'ChatGPT',
+      'claude.ai': 'Claude'
+    };
+
+    // Return mapped name or capitalize first letter of domain
+    return siteNames[domain] || domain.charAt(0).toUpperCase() + domain.slice(1);
+  }
+
   createBlockSchedule(sessionHistory) {
     const today = new Date().toDateString();
     const todaySessions = sessionHistory[today] || [];
@@ -195,9 +258,12 @@ class ExtensionManager {
     // Sort sessions by start time
     const sortedSessions = todaySessions.sort((a, b) => a.startTime - b.startTime);
     
-    // Group sessions by hour
+    // Consolidate consecutive sessions from the same domain
+    const consolidatedSessions = this.consolidateSessions(sortedSessions);
+    
+    // Group consolidated sessions by hour
     const hourlyGroups = {};
-    sortedSessions.forEach(session => {
+    consolidatedSessions.forEach(session => {
       const hour = new Date(session.startTime).getHours();
       if (!hourlyGroups[hour]) {
         hourlyGroups[hour] = [];
@@ -246,7 +312,7 @@ class ExtensionManager {
         `;
         
         sessionBlock.innerHTML = `
-          <div style="font-weight: 500; color: #374151;">${session.domain}</div>
+          <div style="font-weight: 500; color: #374151;">${this.getSiteName(session.domain)}</div>
           <div style="color: #6b7280;">
             ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${duration} min
           </div>
@@ -261,6 +327,45 @@ class ExtensionManager {
     container.appendChild(timelineContainer);
   }
 
+  consolidateSessions(sessions) {
+    if (sessions.length === 0) return [];
+
+    // Sort sessions by start time first
+    const sortedSessions = [...sessions].sort((a, b) => a.startTime - b.startTime);
+    
+    const consolidated = [];
+    let currentSession = { ...sortedSessions[0] };
+
+    console.log('Original sessions:', sortedSessions.length);
+    console.log('First session:', currentSession);
+
+    for (let i = 1; i < sortedSessions.length; i++) {
+      const session = sortedSessions[i];
+      const timeBetween = session.startTime - currentSession.endTime;
+      
+      console.log(`Comparing ${session.domain} (${new Date(session.startTime).toLocaleTimeString()}) with ${currentSession.domain} (${new Date(currentSession.endTime).toLocaleTimeString()}), gap: ${Math.round(timeBetween/1000)}s`);
+      
+      // If same domain and gap is less than 5 minutes (300000ms), merge them
+      if (session.domain === currentSession.domain && timeBetween <= 300000) {
+        // Extend the current session
+        currentSession.endTime = session.endTime;
+        currentSession.duration = currentSession.endTime - currentSession.startTime;
+        console.log(`Merged session, new duration: ${Math.round(currentSession.duration/60000)}min`);
+      } else {
+        // Different domain or gap too large, start new session
+        consolidated.push(currentSession);
+        currentSession = { ...session };
+        console.log(`Added session: ${currentSession.domain}, ${Math.round(currentSession.duration/60000)}min`);
+      }
+    }
+    
+    // Don't forget the last session
+    consolidated.push(currentSession);
+    console.log(`Final consolidated sessions:`, consolidated.length);
+    
+    return consolidated;
+  }
+
   loadChartJS(callback) {
     if (window.Chart) {
       callback();
@@ -268,7 +373,7 @@ class ExtensionManager {
     }
 
     const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+    script.src = 'chart.js';
     script.onload = callback;
     document.head.appendChild(script);
   }
@@ -291,12 +396,10 @@ class ExtensionManager {
 
   validateSettings() {
     const sites = this.getSitesFromTextarea();
-    const duration = parseInt(this.elements.durationInput.value);
-
     const errors = [];
 
     if (sites.length === 0) {
-      errors.push("Please add at least one website to monitor");
+      errors.push("Please add at least one website to track");
     }
 
     sites.forEach(site => {
@@ -304,10 +407,6 @@ class ExtensionManager {
         errors.push(`"${site}" is not a valid domain name`);
       }
     });
-
-    if (!duration || duration < 1 || duration > 480) {
-      errors.push("Timer duration must be between 1 and 480 minutes");
-    }
 
     return errors;
   }
@@ -344,14 +443,12 @@ class ExtensionManager {
       }
 
       const sites = this.getSitesFromTextarea();
-      const duration = parseInt(this.elements.durationInput.value);
       
       this.elements.saveBtn.disabled = true;
       this.elements.saveBtn.textContent = 'Saving...';
       
       const syncSettings = {
-        allowedSites: sites,
-        timerDuration: duration
+        allowedSites: sites
       };
 
       chrome.storage.sync.set(syncSettings, () => {
@@ -361,11 +458,8 @@ class ExtensionManager {
           return;
         }
 
-        // Clear any existing timers when settings change
-        chrome.storage.local.remove(["timerEndTime", "lastTimerDuration"], () => {
-          this.showStatus('Settings saved successfully!');
-          this.resetSaveButton();
-        });
+        this.showStatus('Settings saved successfully!');
+        this.resetSaveButton();
       });
 
     } catch (error) {
@@ -380,15 +474,48 @@ class ExtensionManager {
     this.elements.saveBtn.textContent = 'Save Settings';
   }
 
+  resetTodaysSession() {
+    if (!confirm('Reset today\'s browsing session data?\n\nThis will clear:\n• All time tracking for today\n• Today\'s session history\n• Charts and stats will reset to 0\n\nThis action cannot be undone.')) {
+      return;
+    }
+
+    const today = new Date().toDateString();
+    
+    // Get current data and remove only today's entries
+    chrome.storage.local.get(['timeTracking', 'sessionHistory'], (result) => {
+      const timeTracking = result.timeTracking || {};
+      const sessionHistory = result.sessionHistory || {};
+      
+      // Remove today's data
+      delete timeTracking[today];
+      delete sessionHistory[today];
+      
+      // Save the updated data
+      chrome.storage.local.set({ 
+        timeTracking: timeTracking,
+        sessionHistory: sessionHistory 
+      }, () => {
+        if (chrome.runtime.lastError) {
+          this.showStatus('Failed to reset session data', 'error');
+          return;
+        }
+        
+        this.showStatus('Today\'s session data has been reset');
+        
+        // Refresh the charts and stats
+        this.loadTimeData();
+      });
+    });
+  }
+
   resetSettings() {
-    if (!confirm('Are you sure you want to reset all settings? This will:\n\n• Clear all monitored sites\n• Reset timer to 5 minutes\n• Clear any active timers\n• Clear all time tracking data')) {
+    if (!confirm('Are you sure you want to reset all settings? This will:\n\n• Clear all monitored sites\n• Clear all time tracking data')) {
       return;
     }
 
     chrome.storage.sync.clear(() => {
       chrome.storage.local.clear(() => {
         this.elements.sitesTextarea.value = '';
-        this.elements.durationInput.value = '5';
         
         this.showStatus('All settings and data have been reset');
         
