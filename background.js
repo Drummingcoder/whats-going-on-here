@@ -12,6 +12,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+  // Provide current active session info for popup
+  if (request.action === "getActiveSessionInfo") {
+    // Return the current active tab's domain, startTime, and elapsed time (if any)
+    if (activeDomain && activeStartTime) {
+      sendResponse({
+        domain: activeDomain,
+        startTime: activeStartTime,
+        elapsed: Date.now() - activeStartTime
+      });
+    } else {
+      sendResponse({ domain: null, startTime: null, elapsed: 0 });
+    }
+    return true;
+  }
   
   if (request.action === "getTimeData") {
     chrome.storage.local.get(['timeTracking'], (result) => {
