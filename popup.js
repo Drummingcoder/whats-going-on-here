@@ -1,4 +1,25 @@
 class SimplePopupManager {
+  timerId = null;
+  async getPastSessionInfo(domain) {
+    // Get today's session history and find the most recent session for this domain
+    const today = new Date().toDateString();
+    const result = await chrome.storage.local.get(['sessionHistory']);
+    const sessionHistory = (result.sessionHistory && result.sessionHistory[today]) ? result.sessionHistory[today] : [];
+    let pastMinutes = 0;
+    let pastTitle = null;
+    sessionHistory.forEach(session => {
+      if (session.domain === domain) {
+        pastMinutes += Math.round(session.duration / 1000 / 60);
+        if (!pastTitle && session.title) {
+          pastTitle = session.title;
+        }
+      }
+    });
+    if (pastTitle == "napbabpdghpbnpknamdcapnclgohebnm") {
+      pastTitle = "What's Going ON Here?";
+    }
+    return { pastMinutes, pastTitle };
+  }
   constructor() {
     this.activeTabDomain = null;
     this.activeTabTime = 0;
@@ -9,10 +30,21 @@ class SimplePopupManager {
     try {
       await this.loadCurrentSessionData();
       this.setupEventListeners();
+      this.startLiveUpdate();
     } catch (error) {
       console.error('Popup initialization error:', error);
       this.showNoActivity();
     }
+  }
+
+  startLiveUpdate() {
+    // Clear any previous timer
+    if (this.timerId) {
+      clearInterval(this.timerId);
+    }
+    this.timerId = setInterval(() => {
+      this.loadCurrentSessionData();
+    }, 1000);
   }
 
   setupEventListeners() {
@@ -39,20 +71,23 @@ class SimplePopupManager {
 
       // Ask background for current active session info
       chrome.runtime.sendMessage({ action: "getActiveSessionInfo" }, (response) => {
-        let minutes = 0;
-        if (response && response.domain && response.domain === this.activeTabDomain) {
-          minutes = Math.floor(response.elapsed / 1000 / 60);
+        console.log('Popup received getActiveSessionInfo response:', response);
+        if (response && response.domain && response.domain === this.activeTabDomain && response.startTime) {
+          // Only use startTime for session time tracking
+          const sessionTimeSeconds = Math.floor((Date.now() - response.startTime) / 1000);
+          const pageTitle = response.title || null;
+          console.log('Active session detected. Calculated seconds:', sessionTimeSeconds, 'Title:', pageTitle);
+          this.activeTabTime = sessionTimeSeconds;
+          this.activeTabTitle = pageTitle;
+          this.displayCurrentSession(tab);
         } else {
-          // If not currently tracked, try to get past session time from storage
-          this.getPastSessionTime(this.activeTabDomain).then((pastMinutes) => {
-            this.activeTabTime = pastMinutes;
-            this.displayCurrentSession(tab);
-          });
-          return;
+          // No active session info available
+          this.activeTabTime = 0;
+          this.activeTabTitle = null;
+          this.displayCurrentSession(tab);
         }
-        this.activeTabTime = minutes;
-        this.displayCurrentSession(tab);
       });
+
     } catch (error) {
       console.error('Error loading current session:', error);
       this.showNoActivity();
@@ -103,23 +138,34 @@ class SimplePopupManager {
   displayCurrentSession(tab) {
     const currentSessionDiv = document.getElementById('currentSession');
     const siteName = this.getSiteName(this.activeTabDomain);
-    
+    const displayTitle = this.activeTabTitle || siteName;
+
     if (this.activeTabTime > 0) {
       currentSessionDiv.innerHTML = `
         <div class="session-icon">🌐</div>
-        <div class="session-site">${siteName}</div>
+        <div class="session-site">${displayTitle}</div>
         <div class="session-domain">${this.activeTabDomain}</div>
-        <div class="session-time">${this.formatTime(this.activeTabTime)}</div>
+        <div class="session-time">${this.formatTimeWithSeconds(this.activeTabTime)}</div>
         <div class="session-label">Session Time</div>
       `;
     } else {
       currentSessionDiv.innerHTML = `
         <div class="session-icon">🆕</div>
-        <div class="session-site">${siteName}</div>
+        <div class="session-site">${displayTitle}</div>
         <div class="session-domain">${this.activeTabDomain}</div>
-        <div class="session-time">0m</div>
+        <div class="session-time">0m 0s</div>
         <div class="session-label">New Session</div>
       `;
+    }
+  }
+
+  formatTimeWithSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes > 0) {
+      return `${minutes}m ${seconds}s`;
+    } else {
+      return `${seconds}s`;
     }
   }
 
@@ -132,6 +178,10 @@ class SimplePopupManager {
         Visit a website to start tracking.
       </div>
     `;
+    if (this.timerId) {
+      clearInterval(this.timerId);
+      this.timerId = null;
+    }
   }
 
   openOverviewWindow() {

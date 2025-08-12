@@ -51,9 +51,10 @@ class OverviewManager {
         // Calculate aggregated data from sessions for consistency
         const aggregatedData = this.calculateAggregatedTimeFromSessions(todaySessions);
         
-        this.displayStatsOverview(aggregatedData, todaySessions.length > 0);
-        this.createPieChart(aggregatedData);
-        this.createBlockSchedule(response.sessionHistory);
+  this.lastSessionHistory = response.sessionHistory;
+  this.displayStatsOverview(aggregatedData, todaySessions.length > 0);
+  this.createPieChart(aggregatedData);
+  this.createBlockSchedule(response.sessionHistory);
       } else {
         // No session history, show empty state
         this.displayStatsOverview({}, false);
@@ -127,19 +128,41 @@ class OverviewManager {
       return;
     }
 
-    // Prepare data for pie chart with better precision
-    const sortedData = Object.entries(aggregatedData)
-      .sort(([,a], [,b]) => b - a)
-      .slice(0, 8); // Top 8 sites
 
-    console.log('Pie chart data before processing:', sortedData); // Debug log
+    // Aggregate time by title+domain for today
+    const today = new Date().toDateString();
+    let sessionHistory = [];
+    if (this.lastSessionHistory && this.lastSessionHistory[today]) {
+      sessionHistory = this.lastSessionHistory[today];
+    }
 
-    const labels = sortedData.map(([domain]) => this.getSiteName(domain));
-    const data = sortedData.map(([,time]) => {
-      const minutes = time / 60000; // Convert to minutes with decimal precision
-      return Math.max(0.1, Math.round(minutes * 10) / 10); // Minimum 0.1 min, round to 1 decimal
+    // Aggregate time by title+domain
+    const titleDomainMap = {};
+    sessionHistory.forEach(session => {
+      const key = (session.title || this.getSiteName(session.domain)) + '|' + session.domain;
+      if (!titleDomainMap[key]) {
+        titleDomainMap[key] = { time: 0, title: session.title, domain: session.domain };
+      }
+      titleDomainMap[key].time += session.duration;
     });
-    
+
+    // Sort and pick top 8
+    const sortedData = Object.values(titleDomainMap)
+      .sort((a, b) => b.time - a.time)
+      .slice(0, 8);
+
+    const labels = sortedData.map(item => {
+      let name = item.title || this.getSiteName(item.domain);
+      if (name === "napbabpdghpbnpknamdcapnclgohebnm" || item.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
+        name = "What's Going ON Here?";
+      }
+      return name;
+    });
+    const data = sortedData.map(item => {
+      const minutes = item.time / 60000;
+      return Math.max(0.1, Math.round(minutes * 10) / 10);
+    });
+
     console.log('Pie chart labels:', labels);
     console.log('Pie chart data (minutes):', data); // Debug log
     
@@ -298,10 +321,21 @@ class OverviewManager {
       hourBlock.appendChild(hourLabel);
 
       hourlyGroups[hour].forEach(session => {
+  console.log('Block schedule session:', session);
+  console.log('Session title:', session.title);
         const sessionBlock = document.createElement('div');
         const startTime = new Date(session.startTime);
-        const duration = Math.round(session.duration / 60000); // Convert to minutes
-        
+        const totalSeconds = Math.round(session.duration / 1000);
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = totalSeconds % 60;
+        const durationStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+        let displayName = session.title || this.getSiteName(session.domain);
+
+        // Replace extension ID with friendly name before rendering
+        if (displayName === "napbabpdghpbnpknamdcapnclgohebnm" || session.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
+          displayName = "What's Going ON Here? - Overview";
+        }
+
         sessionBlock.style.cssText = `
           background: #f8fafc;
           border: 1px solid #e2e8f0;
@@ -310,14 +344,14 @@ class OverviewManager {
           margin-bottom: 4px;
           font-size: 12px;
         `;
-        
+
         sessionBlock.innerHTML = `
-          <div style="font-weight: 500; color: #374151;">${this.getSiteName(session.domain)}</div>
+          <div style="font-weight: 500; color: #374151;">${displayName}</div>
           <div style="color: #6b7280;">
-            ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${duration} min
+            ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${durationStr}
           </div>
         `;
-        
+
         hourBlock.appendChild(sessionBlock);
       });
 
