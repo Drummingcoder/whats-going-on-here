@@ -73,6 +73,74 @@
       padding: 32px 24px;
     }
 
+    .date-selector-section {
+      margin-bottom: 32px;
+    }
+
+    .date-selector-container {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px 24px;
+    }
+
+    .date-nav-btn {
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 18px;
+      color: #374151;
+      transition: all 0.2s ease;
+    }
+
+    .date-nav-btn:hover {
+      background: #f9fafb;
+      border-color: #9ca3af;
+      transform: translateY(-1px);
+    }
+
+    .date-nav-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .date-display {
+      font-size: 18px;
+      font-weight: 600;
+      color: #374151;
+      min-width: 200px;
+      text-align: center;
+    }
+
+    .date-picker {
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #374151;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .date-picker:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
     .stats-overview {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -324,11 +392,24 @@
   <div class="main-content">
     <div id="statusMessage" class="status-message"></div>
     
+    <!-- Date Selector -->
+    <div class="date-selector-section">
+      <div class="section-title">
+        <span>📅</span> Select Date
+      </div>
+      <div class="date-selector-container">
+        <button class="date-nav-btn" id="prevDay">‹</button>
+        <div class="date-display" id="dateDisplay">Today</div>
+        <button class="date-nav-btn" id="nextDay">›</button>
+        <input type="date" id="datePicker" class="date-picker">
+      </div>
+    </div>
+    
     <!-- Stats Overview -->
     <div class="stats-overview">
       <div class="stat-card">
         <div class="stat-value" id="todayTotal">0h 0m</div>
-        <div class="stat-label">Today's Total</div>
+        <div class="stat-label" id="totalLabel">Total Time</div>
       </div>
       <div class="stat-card">
         <div class="stat-value" id="sitesVisited">0</div>

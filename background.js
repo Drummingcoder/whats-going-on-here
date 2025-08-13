@@ -1,9 +1,35 @@
-// Time tracking variables
+// Track open Chrome windows
+let openWindowCount = 0;
+
+// Initialize window count on startup
+chrome.windows.getAll({}, (windows) => {
+  openWindowCount = windows.length;
+});
+
+chrome.windows.onCreated.addListener(() => {
+  if (openWindowCount === 0) {
+    logEvent('browser_opened');
+  }
+  openWindowCount++;
+});
+
+chrome.windows.onRemoved.addListener(() => {
+  openWindowCount--;
+  if (openWindowCount <= 0) {
+    stopTracking(); // Properly close out the last active page
+    logEvent('browser_closed');
+    openWindowCount = 0;
+  }
+});
+// Log browser startup event
+chrome.runtime.onStartup.addListener(() => {
+  logEvent('browser_startup');
+});
+// Event-based tracking variables
 let activeTabId = null;
 let activeStartTime = null;
 let activeDomain = null;
-let awayStartTime = null;
-let isAwayTracking = false;
+let activeTitle = null;
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === "getSettings") {
@@ -16,15 +42,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   // Provide current active session info for popup
   if (request.action === "getActiveSessionInfo") {
-    // Return the current active tab's domain, startTime, and elapsed time (if any)
+    // Return the current active tab's domain, activeStartTime, and title (if any)
     if (activeDomain && activeStartTime) {
       sendResponse({
         domain: activeDomain,
-        startTime: activeStartTime,
-        elapsed: Date.now() - activeStartTime
+        activeStartTime: activeStartTime,
+        title: activeTitle
       });
     } else {
-      sendResponse({ domain: null, startTime: null, elapsed: 0 });
+      sendResponse({ domain: null, activeStartTime: null, title: null });
+    }
+    return true;
+  }
+  
+  // Handle page visibility changes from content scripts
+  if (request.action === "pageVisibilityChanged") {
+    const domain = getDomainFromUrl(request.url);
+    if (domain && domain === activeDomain) {
+      if (request.hidden) {
+        // Page became hidden - user likely switched away from Chrome
+        logEvent('page_hidden', domain, activeTitle);
+      } else {
+        // Page became visible - user likely switched back to Chrome
+        logEvent('page_visible', domain, activeTitle);
+      }
     }
     return true;
   }
@@ -38,10 +79,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  if (request.action === "getSessionHistory") {
-    chrome.storage.local.get(['sessionHistory'], (result) => {
+  if (request.action === "getEventLog") {
+    chrome.storage.local.get(['eventLog'], (result) => {
       sendResponse({
-        sessionHistory: result.sessionHistory || {}
+        eventLog: result.eventLog || {}
       });
     });
     return true;
@@ -62,7 +103,27 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// Time tracking functions
+// Event-based logging function
+function logEvent(eventType, domain = null, title = null, timestamp = Date.now()) {
+  const today = new Date(timestamp).toDateString();
+  const event = {
+    type: eventType,
+    domain: domain,
+    title: title,
+    timestamp: timestamp
+  };
+
+  chrome.storage.local.get(['eventLog'], (result) => {
+    const eventLog = result.eventLog || {};
+    if (!eventLog[today]) {
+      eventLog[today] = [];
+    }
+    eventLog[today].push(event);
+    chrome.storage.local.set({ eventLog: eventLog });
+    console.log('Event logged:', event);
+  });
+}
+
 function getDomainFromUrl(url) {
   try {
     const urlObj = new URL(url);
@@ -72,134 +133,103 @@ function getDomainFromUrl(url) {
   }
 }
 
-function saveTimeSpent(domain, timeSpent, startTime) {
-  if (!domain || timeSpent < 1000) return; // Ignore very short sessions (less than 1 second)
-
-  // Helper to save session with title
-  function saveSessionWithTitle(title) {
-    console.log('Saving session with title:', title);
-    chrome.storage.local.get(['timeTracking', 'sessionHistory'], (result) => {
-      const timeData = result.timeTracking || {};
-      const sessionHistory = result.sessionHistory || {};
-      const today = new Date().toDateString();
-      const endTime = startTime + timeSpent;
-
-      // Store session history for both pie charts and block schedules
-      if (!sessionHistory[today]) {
-        sessionHistory[today] = [];
-      }
-      sessionHistory[today].push({
-        domain: domain,
-        title: title,
-        startTime: startTime,
-        endTime: endTime,
-        duration: timeSpent,
-        timestamp: new Date(startTime).toISOString()
-      });
-
-      // Keep existing total tracking for backwards compatibility
-      if (!timeData[today]) {
-        timeData[today] = {};
-      }
-      if (!timeData[today][domain]) {
-        timeData[today][domain] = 0;
-      }
-      timeData[today][domain] += timeSpent;
-
-      chrome.storage.local.set({ 
-        timeTracking: timeData,
-        sessionHistory: sessionHistory
-      });
-    });
-  }
-
-  // For 'away-from-chrome', no tab, so no title
-  if (domain === 'away-from-chrome') {
-    saveSessionWithTitle('Away from Chrome');
+function getPageTitle(tabId, callback) {
+  if (!tabId) {
+    callback(null);
     return;
   }
-
-  // Try to get the tabId from activeTabId
-  const tabId = typeof activeTabId === 'number' ? activeTabId : null;
-  function isRestrictedUrl(url) {
-    return (
-      !url ||
-      url.startsWith('chrome://') ||
-      url.startsWith('chrome-extension://') ||
-      url.startsWith('about:') ||
-      url.startsWith('file://')
-    );
-  }
-
-  if (tabId) {
-    chrome.tabs.get(tabId, (tab) => {
-      if (chrome.runtime.lastError || !tab || isRestrictedUrl(tab.url)) {
-        saveSessionWithTitle(domain);
-        return;
-      }
-      chrome.tabs.sendMessage(tabId, { action: "getPageTitle" }, (response) => {
-        if (chrome.runtime.lastError || !response || !response.title) {
-          saveSessionWithTitle(domain);
-        } else {
-          saveSessionWithTitle(response.title);
-        }
-      });
-    });
-  } else {
-    // Fallback: try to get any active tab
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs.length > 0 && !isRestrictedUrl(tabs[0].url)) {
-        chrome.tabs.sendMessage(tabs[0].id, { action: "getPageTitle" }, (response) => {
-          if (chrome.runtime.lastError || !response || !response.title) {
-            saveSessionWithTitle(domain);
-          } else {
-            saveSessionWithTitle(response.title);
-          }
-        });
+  
+  chrome.tabs.get(tabId, (tab) => {
+    if (chrome.runtime.lastError || !tab) {
+      callback(null);
+      return;
+    }
+    
+    if (isRestrictedUrl(tab.url)) {
+      callback(tab.title || 'Restricted Page');
+      return;
+    }
+    
+    chrome.tabs.sendMessage(tabId, { action: "getPageTitle" }, (response) => {
+      if (chrome.runtime.lastError || !response || !response.title) {
+        callback(tab.title || 'Unknown Page');
       } else {
-        saveSessionWithTitle(domain);
+        callback(response.title);
       }
     });
-  }
+  });
+}
+
+function isRestrictedUrl(url) {
+  return (
+    !url ||
+    (url.startsWith('chrome://') && !url.startsWith('chrome://newtab')) ||
+    url.startsWith('about:') ||
+    url.startsWith('file://')
+  );
 }
 
 function startTracking(tabId, url) {
-  const domain = getDomainFromUrl(url);
-  if (!domain) return;
+  let domain = getDomainFromUrl(url);
+  let title = null;
   
-  // Save time for previous domain if there was one
-  if (activeDomain && activeStartTime) {
-    const timeSpent = Date.now() - activeStartTime;
-    saveTimeSpent(activeDomain, timeSpent, activeStartTime);
+  console.log('Starting tracking for tab:', tabId, 'URL:', url);
+  // Handle restricted URLs and new tab
+  if (url.startsWith('chrome://newtab')) {
+    domain = 'chrome://newtab';
+    title = 'New Tab';
+  } else if (url.startsWith('chrome-extension://')) {
+    // For extension pages, use the extension ID as domain and get the title normally
+    // Don't override with 'chrome-tab-unknown'
+    domain = getDomainFromUrl(url); // Keep the extension ID as domain
+    title = null; // Will get actual title from tab
+  } else if (isRestrictedUrl(url)) {
+    // Only treat as unknown if restricted and NOT an extension page
+    domain = 'chrome-tab-unknown';
+    title = 'Chrome Tab (Unknown)';
+  } else if (!domain) {
+    // If no domain, treat as unknown Chrome tab
+    domain = 'chrome-tab-unknown';
+    title = 'Chrome Tab (Unknown)';
   }
-  
-  // Start tracking new domain
+
+  // Log tab deactivation event for previous tab if there was one
+  if (activeDomain) {
+    logEvent('tab_deactivated', activeDomain, activeTitle);
+  }
+
+  // Update active tracking
   activeTabId = tabId;
   activeDomain = domain;
   activeStartTime = Date.now();
+  activeTitle = title;
+
+  // Only get page title for non-restricted URLs
+  if (!title) {
+    getPageTitle(tabId, (resolvedTitle) => {
+      activeTitle = resolvedTitle;
+      logEvent('tab_activated', domain, resolvedTitle);
+    });
+  } else {
+    logEvent('tab_activated', domain, title);
+  }
 }
 
 function stopTracking() {
-  if (activeDomain && activeStartTime) {
-    const timeSpent = Date.now() - activeStartTime;
-    saveTimeSpent(activeDomain, timeSpent, activeStartTime);
+  if (activeDomain) {
+    logEvent('tab_closed', activeDomain, activeTitle);
   }
+  
   activeTabId = null;
   activeDomain = null;
   activeStartTime = null;
-  // Stop away tracking if running
-  if (isAwayTracking && awayStartTime) {
-    const timeSpent = Date.now() - awayStartTime;
-    saveTimeSpent('away-from-chrome', timeSpent, awayStartTime);
-    awayStartTime = null;
-    isAwayTracking = false;
-  }
+  activeTitle = null;
 }
 
 // Tab event listeners
 chrome.tabs.onActivated.addListener((activeInfo) => {
   chrome.tabs.get(activeInfo.tabId, (tab) => {
-    if (tab.url && !tab.url.startsWith('chrome://')) {
+    if (tab.url) {
       startTracking(tab.id, tab.url);
     } else {
       stopTracking();
@@ -221,22 +251,21 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Browser lost focus: stop tab tracking, start away tracking
-    stopTracking();
-    if (!isAwayTracking) {
-      awayStartTime = Date.now();
-      isAwayTracking = true;
+    // Browser lost focus
+    logEvent('browser_blur');
+    if (activeDomain) {
+      logEvent('tab_deactivated', activeDomain, activeTitle);
     }
+    // Clear active tracking but don't log tab_closed
+    activeTabId = null;
+    activeDomain = null;
+    activeStartTime = null;
+    activeTitle = null;
   } else {
-    // Browser gained focus: stop away tracking, resume tab tracking
-    if (isAwayTracking && awayStartTime) {
-      const timeSpent = Date.now() - awayStartTime;
-      saveTimeSpent('away-from-chrome', timeSpent, awayStartTime);
-      awayStartTime = null;
-      isAwayTracking = false;
-    }
+    // Browser gained focus
+    logEvent('browser_focus');
     chrome.tabs.query({ active: true, windowId: windowId }, (tabs) => {
-      if (tabs.length > 0 && tabs[0].url && !tabs[0].url.startsWith('chrome://')) {
+      if (tabs.length > 0 && tabs[0].url) {
         startTracking(tabs[0].id, tabs[0].url);
       }
     });

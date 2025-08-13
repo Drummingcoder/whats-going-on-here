@@ -1,25 +1,6 @@
 class SimplePopupManager {
   timerId = null;
-  async getPastSessionInfo(domain) {
-    // Get today's session history and find the most recent session for this domain
-    const today = new Date().toDateString();
-    const result = await chrome.storage.local.get(['sessionHistory']);
-    const sessionHistory = (result.sessionHistory && result.sessionHistory[today]) ? result.sessionHistory[today] : [];
-    let pastMinutes = 0;
-    let pastTitle = null;
-    sessionHistory.forEach(session => {
-      if (session.domain === domain) {
-        pastMinutes += Math.round(session.duration / 1000 / 60);
-        if (!pastTitle && session.title) {
-          pastTitle = session.title;
-        }
-      }
-    });
-    if (pastTitle == "napbabpdghpbnpknamdcapnclgohebnm") {
-      pastTitle = "What's Going ON Here?";
-    }
-    return { pastMinutes, pastTitle };
-  }
+  
   constructor() {
     this.activeTabDomain = null;
     this.activeTabTime = 0;
@@ -67,24 +48,32 @@ class SimplePopupManager {
         this.showNoActivity();
         return;
       }
-      this.activeTabDomain = this.extractDomain(tab.url);
-
+      
+      const currentDomain = this.extractDomain(tab.url);
+      
       // Ask background for current active session info
-      chrome.runtime.sendMessage({ action: "getActiveSessionInfo" }, (response) => {
-        console.log('Popup received getActiveSessionInfo response:', response);
-        if (response && response.domain && response.domain === this.activeTabDomain && response.startTime) {
-          // Only use startTime for session time tracking
-          const sessionTimeSeconds = Math.floor((Date.now() - response.startTime) / 1000);
-          const pageTitle = response.title || null;
-          console.log('Active session detected. Calculated seconds:', sessionTimeSeconds, 'Title:', pageTitle);
+      chrome.runtime.sendMessage({ action: "getActiveSessionInfo" }, async (response) => {
+        if (response && response.domain && response.activeStartTime) {
+          // Calculate current session time
+          const sessionTimeSeconds = Math.floor((Date.now() - response.activeStartTime) / 1000);
+          this.activeTabDomain = response.domain;
           this.activeTabTime = sessionTimeSeconds;
-          this.activeTabTitle = pageTitle;
-          this.displayCurrentSession(tab);
+          this.activeTabTitle = response.title;
+          
+          // Get total time spent on this domain today from event log
+          const totalTimeToday = await this.getTotalTimeForDomain(response.domain);
+          
+          this.displayCurrentSession(tab, totalTimeToday);
         } else {
-          // No active session info available
+          // No active session
+          this.activeTabDomain = currentDomain;
           this.activeTabTime = 0;
           this.activeTabTitle = null;
-          this.displayCurrentSession(tab);
+          
+          // Still get total time for the current domain
+          const totalTimeToday = await this.getTotalTimeForDomain(currentDomain);
+          
+          this.displayCurrentSession(tab, totalTimeToday);
         }
       });
 
@@ -92,6 +81,52 @@ class SimplePopupManager {
       console.error('Error loading current session:', error);
       this.showNoActivity();
     }
+  }
+
+  async getTotalTimeForDomain(domain) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: "getEventLog" }, (response) => {
+        if (response && response.eventLog) {
+          const today = new Date().toDateString();
+          const todayEvents = response.eventLog[today] || [];
+          
+          // Process events to calculate total time for this domain
+          const totalTime = this.calculateDomainTimeFromEvents(todayEvents, domain);
+          resolve(totalTime);
+        } else {
+          resolve(0);
+        }
+      });
+    });
+  }
+
+  calculateDomainTimeFromEvents(events, targetDomain) {
+    // Sort events by timestamp
+    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+    let totalTime = 0;
+    let sessionStart = null;
+    
+    for (const event of sortedEvents) {
+      if (event.domain === targetDomain) {
+        if (event.type === 'tab_activated' && !sessionStart) {
+          sessionStart = event.timestamp;
+        } else if ((event.type === 'tab_deactivated' || event.type === 'tab_closed') && sessionStart) {
+          totalTime += event.timestamp - sessionStart;
+          sessionStart = null;
+        }
+      } else if (sessionStart && (event.type === 'tab_activated' || event.type === 'browser_blur')) {
+        // Session ended because user switched to different domain
+        totalTime += event.timestamp - sessionStart;
+        sessionStart = null;
+      }
+    }
+    
+    // If session is still ongoing, add time up to now
+    if (sessionStart) {
+      totalTime += Date.now() - sessionStart;
+    }
+    
+    return Math.floor(totalTime / 1000); // Return in seconds
   }
 
   async getPastSessionTime(domain) {
@@ -135,10 +170,11 @@ class SimplePopupManager {
     return Math.max(0, Math.round(totalTime / 1000 / 60)); // Convert to minutes
   }
 
-  displayCurrentSession(tab) {
+  displayCurrentSession(tab, totalTimeToday = 0) {
     const currentSessionDiv = document.getElementById('currentSession');
     const siteName = this.getSiteName(this.activeTabDomain);
     const displayTitle = this.activeTabTitle || siteName;
+    const totalMinutes = Math.floor(totalTimeToday / 60);
 
     if (this.activeTabTime > 0) {
       currentSessionDiv.innerHTML = `
@@ -146,7 +182,8 @@ class SimplePopupManager {
         <div class="session-site">${displayTitle}</div>
         <div class="session-domain">${this.activeTabDomain}</div>
         <div class="session-time">${this.formatTimeWithSeconds(this.activeTabTime)}</div>
-        <div class="session-label">Session Time</div>
+        <div class="session-label">Current Session</div>
+        ${totalMinutes > 0 ? `<div style="margin-top: 8px; font-size: 12px; color: #6b7280;">Total today: ${this.formatTime(totalMinutes)}</div>` : ''}
       `;
     } else {
       currentSessionDiv.innerHTML = `
@@ -155,6 +192,7 @@ class SimplePopupManager {
         <div class="session-domain">${this.activeTabDomain}</div>
         <div class="session-time">0m 0s</div>
         <div class="session-label">New Session</div>
+        ${totalMinutes > 0 ? `<div style="margin-top: 8px; font-size: 12px; color: #6b7280;">Total today: ${this.formatTime(totalMinutes)}</div>` : ''}
       `;
     }
   }
@@ -199,15 +237,27 @@ class SimplePopupManager {
 
     try {
       const today = new Date().toDateString();
-      const sessionKey = `timeTracking_${today}`;
       
-      // Remove today's data
-      await chrome.storage.local.remove([sessionKey]);
+      // Get current data and remove only today's entries
+      chrome.storage.local.get(['timeTracking', 'eventLog'], (result) => {
+        const timeTracking = result.timeTracking || {};
+        const eventLog = result.eventLog || {};
+        
+        // Remove today's data
+        delete timeTracking[today];
+        delete eventLog[today];
+        
+        // Save the updated data
+        chrome.storage.local.set({ 
+          timeTracking: timeTracking,
+          eventLog: eventLog 
+        }, () => {
+          // Reload the popup data
+          this.loadCurrentSessionData();
+          console.log('Today\'s session data has been reset');
+        });
+      });
       
-      // Reload the popup data
-      await this.loadCurrentSessionData();
-      
-      console.log('Today\'s session data has been reset');
     } catch (error) {
       console.error('Error resetting session data:', error);
     }
@@ -215,10 +265,21 @@ class SimplePopupManager {
 
   extractDomain(url) {
     try {
+      if (url.startsWith('chrome://newtab')) {
+        return 'chrome://newtab';
+      }
+      if (url.startsWith('chrome-extension://')) {
+        const urlObj = new URL(url);
+        return urlObj.hostname; // Keep extension ID as domain
+      }
+      if (url.startsWith('chrome://') || url.startsWith('about:') || url.startsWith('file://')) {
+        return 'chrome-tab-unknown';
+      }
+      
       const urlObj = new URL(url);
-      return urlObj.hostname.replace(/^www\./, '');
+      return urlObj.hostname; // Don't remove www. - keep exact domain
     } catch (error) {
-      return url;
+      return 'chrome-tab-unknown';
     }
   }
 

@@ -12,9 +12,16 @@ class OverviewManager {
       toggleSettingsBtn: document.getElementById("toggleSettings"),
       settingsPanel: document.getElementById("settingsPanel"),
       
+      // Date selector elements
+      dateDisplay: document.getElementById("dateDisplay"),
+      datePicker: document.getElementById("datePicker"),
+      prevDayBtn: document.getElementById("prevDay"),
+      nextDayBtn: document.getElementById("nextDay"),
+      
       // Stats elements
       todayTotal: document.getElementById("todayTotal"),
       sitesVisited: document.getElementById("sitesVisited"),
+      totalLabel: document.getElementById("totalLabel"),
       
       // Chart elements
       pieChart: document.getElementById("pieChart"),
@@ -24,11 +31,13 @@ class OverviewManager {
     };
 
     this.pieChartInstance = null;
+    this.selectedDate = new Date();
     this.init();
   }
 
   init() {
     this.loadSettings();
+    this.initializeDateSelector();
     this.loadTimeData();
     this.attachEventListeners();
   }
@@ -41,27 +50,276 @@ class OverviewManager {
     });
   }
 
-  loadTimeData() {
-    // Get session history for both charts and stats - this ensures consistency
-    chrome.runtime.sendMessage({ action: "getSessionHistory" }, (response) => {
-      if (response && response.sessionHistory) {
-        const today = new Date().toDateString();
-        const todaySessions = response.sessionHistory[today] || [];
-        
-        // Calculate aggregated data from sessions for consistency
-        const aggregatedData = this.calculateAggregatedTimeFromSessions(todaySessions);
-        
-  this.lastSessionHistory = response.sessionHistory;
-  this.displayStatsOverview(aggregatedData, todaySessions.length > 0);
-  this.createPieChart(aggregatedData);
-  this.createBlockSchedule(response.sessionHistory);
+  initializeDateSelector() {
+    // Set initial date picker value
+    this.elements.datePicker.value = this.formatDateForInput(this.selectedDate);
+    this.updateDateDisplay();
+    this.updateNavigationButtons();
+  }
+
+  updateDateDisplay() {
+    const today = new Date();
+    const selectedDateStr = this.selectedDate.toDateString();
+    const todayStr = today.toDateString();
+    
+    if (selectedDateStr === todayStr) {
+      this.elements.dateDisplay.textContent = 'Today';
+    } else {
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      if (selectedDateStr === yesterday.toDateString()) {
+        this.elements.dateDisplay.textContent = 'Yesterday';
       } else {
-        // No session history, show empty state
+        this.elements.dateDisplay.textContent = this.selectedDate.toLocaleDateString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        });
+      }
+    }
+  }
+
+  updateNavigationButtons() {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
+    // Disable next button if selected date is today or later
+    this.elements.nextDayBtn.disabled = this.selectedDate >= today;
+  }
+
+  formatDateForInput(date) {
+    return date.toISOString().split('T')[0];
+  }
+
+  navigateDate(direction) {
+    const newDate = new Date(this.selectedDate);
+    newDate.setDate(newDate.getDate() + direction);
+    
+    // Don't allow future dates beyond today
+    const today = new Date();
+    if (newDate > today) {
+      return;
+    }
+    
+    this.selectedDate = newDate;
+    this.elements.datePicker.value = this.formatDateForInput(this.selectedDate);
+    this.updateDateDisplay();
+    this.updateNavigationButtons();
+    this.loadTimeData();
+  }
+
+  loadTimeData() {
+    // Get event log for processing events into sessions
+    chrome.runtime.sendMessage({ action: "getEventLog" }, (response) => {
+      if (response && response.eventLog) {
+        const selectedDateStr = this.selectedDate.toDateString();
+        const dayEvents = response.eventLog[selectedDateStr] || [];
+        
+        // Process events into sessions
+        const processedSessions = this.processEventsIntoSessions(dayEvents);
+        
+        // Calculate aggregated data from processed sessions
+        const aggregatedData = this.calculateAggregatedTimeFromSessions(processedSessions);
+        
+        this.lastProcessedSessions = processedSessions;
+        this.displayStatsOverview(aggregatedData, processedSessions.length > 0);
+        this.createPieChart(aggregatedData);
+        this.createBlockSchedule(processedSessions);
+      } else {
+        // No event log, show empty state
         this.displayStatsOverview({}, false);
-        this.elements.pieChartPlaceholder.innerHTML = '<div style="color: #94a3b8;">No data for today yet</div>';
-        this.elements.schedulePlaceholder.innerHTML = '<div style="color: #94a3b8;">No activity recorded today</div>';
+        this.elements.pieChartPlaceholder.innerHTML = '<div style="color: #94a3b8;">No data for this date</div>';
+        this.elements.schedulePlaceholder.innerHTML = '<div style="color: #94a3b8;">No activity recorded for this date</div>';
       }
     });
+  }
+
+  processEventsIntoSessions(events) {
+    if (events.length === 0) return [];
+
+    // Sort events by timestamp
+    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+    const sessions = [];
+    let currentTabSession = null;
+    let browserBlurTime = null;
+
+    let lastEventTimestamp = null;
+    for (const event of sortedEvents) {
+      lastEventTimestamp = event.timestamp;
+      switch (event.type) {
+        case 'browser_startup':
+          // Add as a point event (no duration)
+          sessions.push({
+            domain: 'browser-startup',
+            title: 'Browser Opened',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
+        case 'browser_closed':
+          // Add as a point event (no duration)
+          sessions.push({
+            domain: 'browser-closed',
+            title: 'Browser Closed',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
+        case 'tab_activated':
+          // If we have a browser blur time but see tab activation, 
+          // it means browser_focus was missed - end the away session
+          if (browserBlurTime) {
+            const awayDuration = event.timestamp - browserBlurTime;
+            if (awayDuration > 1000 && awayDuration < 12 * 60 * 60 * 1000) { // Cap at 12 hours
+              sessions.push({
+                domain: 'away-from-chrome',
+                title: 'Away from Chrome',
+                startTime: browserBlurTime,
+                endTime: event.timestamp,
+                duration: awayDuration
+              });
+            } else {
+            }
+            browserBlurTime = null;
+          }
+
+          // End current tab session if exists
+          if (currentTabSession) {
+            currentTabSession.endTime = event.timestamp;
+            currentTabSession.duration = currentTabSession.endTime - currentTabSession.startTime;
+            sessions.push(currentTabSession);
+          }
+          
+          // Start new tab session
+          currentTabSession = {
+            domain: event.domain,
+            title: event.title,
+            startTime: event.timestamp,
+            endTime: null,
+            duration: 0
+          };
+          break;
+
+        case 'tab_deactivated':
+        case 'tab_closed':
+          // End current tab session if it matches the event domain
+          if (currentTabSession && currentTabSession.domain === event.domain) {
+            currentTabSession.endTime = event.timestamp;
+            currentTabSession.duration = currentTabSession.endTime - currentTabSession.startTime;
+            sessions.push(currentTabSession);
+            currentTabSession = null;
+          }
+          break;
+
+        case 'browser_blur':
+          // End current tab session first
+          if (currentTabSession) {
+            currentTabSession.endTime = event.timestamp;
+            currentTabSession.duration = currentTabSession.endTime - currentTabSession.startTime;
+            sessions.push(currentTabSession);
+            currentTabSession = null;
+          }
+          
+          // Start tracking "away from Chrome" time only if not already tracking
+          if (!browserBlurTime) {
+            browserBlurTime = event.timestamp;
+          } else {
+          }
+          break;
+
+        case 'browser_focus':
+          // End "away from Chrome" session if exists
+          if (browserBlurTime) {
+            const awayDuration = event.timestamp - browserBlurTime;
+            if (awayDuration > 1000) { // Only track if away for more than 1 second
+              sessions.push({
+                domain: 'away-from-chrome',
+                title: 'Away from Chrome',
+                startTime: browserBlurTime,
+                endTime: event.timestamp,
+                duration: awayDuration
+              });
+            }
+            browserBlurTime = null;
+          }
+          break;
+
+        case 'page_hidden':
+          // Page became hidden - treat like browser blur but only if it matches current tab
+          if (currentTabSession && currentTabSession.domain === event.domain) {
+            currentTabSession.endTime = event.timestamp;
+            currentTabSession.duration = currentTabSession.endTime - currentTabSession.startTime;
+            sessions.push(currentTabSession);
+            currentTabSession = null;
+          }
+          
+          // Start tracking "away from Chrome" time
+          if (!browserBlurTime) {
+            browserBlurTime = event.timestamp;
+          }
+          break;
+
+        case 'page_visible':
+          // Page became visible - treat like browser focus
+          if (browserBlurTime) {
+            const awayDuration = event.timestamp - browserBlurTime;
+            if (awayDuration > 1000) {
+              sessions.push({
+                domain: 'away-from-chrome',
+                title: 'Away from Chrome',
+                startTime: browserBlurTime,
+                endTime: event.timestamp,
+                duration: awayDuration
+              });
+            }
+            browserBlurTime = null;
+          }
+          
+          // Restart tracking for this page if it's the same domain
+          if (event.domain && !currentTabSession) {
+            currentTabSession = {
+              domain: event.domain,
+              title: event.title,
+              startTime: event.timestamp,
+              endTime: null,
+              duration: 0
+            };
+          }
+          break;
+      }
+    }
+
+    // Handle any ongoing session (if last event was activation and browser is still active)
+    if (currentTabSession) {
+      currentTabSession.endTime = Date.now();
+      currentTabSession.duration = currentTabSession.endTime - currentTabSession.startTime;
+      sessions.push(currentTabSession);
+    }
+
+    // Handle ongoing "away from Chrome" session
+    if (browserBlurTime) {
+      const awayDuration = Date.now() - browserBlurTime;
+      if (awayDuration > 1000) {
+        sessions.push({
+          domain: 'away-from-chrome',
+          title: 'Away from Chrome',
+          startTime: browserBlurTime,
+          endTime: Date.now(),
+          duration: awayDuration
+        });
+      }
+    }
+
+    return sessions.filter(session =>
+      session.duration > 1000 ||
+      session.domain === 'browser-startup' ||
+      session.domain === 'browser-closed'
+    ); // Filter out very short sessions, but always include browser open/close events
   }
 
   calculateAggregatedTimeFromSessions(sessions) {
@@ -77,7 +335,6 @@ class OverviewManager {
       aggregated[session.domain] += session.duration;
     });
     
-    console.log('Aggregated time data:', aggregated); // Debug log
     return aggregated;
   }
 
@@ -85,6 +342,31 @@ class OverviewManager {
     // Settings panel toggle
     this.elements.toggleSettingsBtn.addEventListener("click", () => {
       this.toggleSettingsPanel();
+    });
+    
+    // Date navigation
+    this.elements.prevDayBtn.addEventListener("click", () => {
+      this.navigateDate(-1);
+    });
+    
+    this.elements.nextDayBtn.addEventListener("click", () => {
+      this.navigateDate(1);
+    });
+    
+    this.elements.datePicker.addEventListener("change", (e) => {
+      const selectedDate = new Date(e.target.value + 'T12:00:00'); // Add time to avoid timezone issues
+      const today = new Date();
+      
+      // Don't allow future dates
+      if (selectedDate > today) {
+        this.elements.datePicker.value = this.formatDateForInput(this.selectedDate);
+        return;
+      }
+      
+      this.selectedDate = selectedDate;
+      this.updateDateDisplay();
+      this.updateNavigationButtons();
+      this.loadTimeData();
     });
     
     // Settings save/reset
@@ -105,6 +387,11 @@ class OverviewManager {
   }
 
   displayStatsOverview(aggregatedData, hasData) {
+    // Update label based on selected date
+    const today = new Date();
+    const isToday = this.selectedDate.toDateString() === today.toDateString();
+    this.elements.totalLabel.textContent = isToday ? "Today's Total" : "Total Time";
+    
     if (!hasData) {
       this.elements.todayTotal.textContent = "0m";
       this.elements.sitesVisited.textContent = "0";
@@ -124,36 +411,39 @@ class OverviewManager {
 
   createPieChart(aggregatedData) {
     if (Object.keys(aggregatedData).length === 0) {
-      this.elements.pieChartPlaceholder.innerHTML = '<div style="color: #94a3b8;">No data for today yet</div>';
+      const today = new Date();
+      const isToday = this.selectedDate.toDateString() === today.toDateString();
+      const emptyMessage = isToday ? 'No data for today yet' : 'No data for this date';
+      this.elements.pieChartPlaceholder.innerHTML = `<div style="color: #94a3b8;">${emptyMessage}</div>`;
+      this.elements.pieChartPlaceholder.style.display = 'block';
+      this.elements.pieChart.style.display = 'none';
       return;
     }
 
-
-    // Aggregate time by title+domain for today
-    const today = new Date().toDateString();
-    let sessionHistory = [];
-    if (this.lastSessionHistory && this.lastSessionHistory[today]) {
-      sessionHistory = this.lastSessionHistory[today];
+    // Use processed sessions for domain aggregation
+    let processedSessions = [];
+    if (this.lastProcessedSessions) {
+      processedSessions = this.lastProcessedSessions;
     }
 
-    // Aggregate time by title+domain
-    const titleDomainMap = {};
-    sessionHistory.forEach(session => {
-      const key = (session.title || this.getSiteName(session.domain)) + '|' + session.domain;
-      if (!titleDomainMap[key]) {
-        titleDomainMap[key] = { time: 0, title: session.title, domain: session.domain };
+    // Aggregate time by domain only
+    const domainMap = {};
+    processedSessions.forEach(session => {
+      const domain = session.domain;
+      if (!domainMap[domain]) {
+        domainMap[domain] = { time: 0, domain: domain };
       }
-      titleDomainMap[key].time += session.duration;
+      domainMap[domain].time += session.duration;
     });
 
     // Sort and pick top 8
-    const sortedData = Object.values(titleDomainMap)
+    const sortedData = Object.values(domainMap)
       .sort((a, b) => b.time - a.time)
       .slice(0, 8);
 
     const labels = sortedData.map(item => {
-      let name = item.title || this.getSiteName(item.domain);
-      if (name === "napbabpdghpbnpknamdcapnclgohebnm" || item.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
+      let name = this.getSiteName(item.domain);
+      if (item.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
         name = "What's Going ON Here?";
       }
       return name;
@@ -163,9 +453,6 @@ class OverviewManager {
       return Math.max(0.1, Math.round(minutes * 10) / 10);
     });
 
-    console.log('Pie chart labels:', labels);
-    console.log('Pie chart data (minutes):', data); // Debug log
-    
     const colors = [
       '#667eea', '#764ba2', '#f093fb', '#f5576c',
       '#4facfe', '#00f2fe', '#43e97b', '#38f9d7'
@@ -224,7 +511,7 @@ class OverviewManager {
   }
 
   getSiteName(domain) {
-    // Map common domains to their display names
+    // Map common domains and special cases to their display names
     const siteNames = {
       'google.com': 'Google',
       'youtube.com': 'YouTube',
@@ -254,19 +541,23 @@ class OverviewManager {
       'asana.com': 'Asana',
       'gemini.google.com': 'Gemini',
       'chatgpt.com': 'ChatGPT',
-      'claude.ai': 'Claude'
+      'claude.ai': 'Claude',
+      // Special cases
+      'away-from-chrome': 'Away From Chrome',
+      'chrome-tab-unknown': 'Chrome Tab (unknown)',
+      'chrome://newtab': 'New Tab (Chrome)'
     };
-
-    // Return mapped name or capitalize first letter of domain
-    return siteNames[domain] || domain.charAt(0).toUpperCase() + domain.slice(1);
+    return siteNames[domain] || domain;
   }
 
-  createBlockSchedule(sessionHistory) {
-    const today = new Date().toDateString();
-    const todaySessions = sessionHistory[today] || [];
-    
-    if (todaySessions.length === 0) {
-      this.elements.schedulePlaceholder.innerHTML = '<div style="color: #94a3b8;">No activity recorded today</div>';
+  createBlockSchedule(processedSessions) {
+    if (processedSessions.length === 0) {
+      const today = new Date();
+      const isToday = this.selectedDate.toDateString() === today.toDateString();
+      const emptyMessage = isToday ? 'No activity recorded today' : 'No activity recorded for this date';
+      this.elements.schedulePlaceholder.innerHTML = `<div style="color: #94a3b8;">${emptyMessage}</div>`;
+      this.elements.schedulePlaceholder.style.display = 'block';
+      this.elements.blockSchedule.style.display = 'none';
       return;
     }
 
@@ -279,7 +570,7 @@ class OverviewManager {
     container.innerHTML = '';
     
     // Sort sessions by start time
-    const sortedSessions = todaySessions.sort((a, b) => a.startTime - b.startTime);
+    const sortedSessions = processedSessions.sort((a, b) => a.startTime - b.startTime);
     
     // Consolidate consecutive sessions from the same domain
     const consolidatedSessions = this.consolidateSessions(sortedSessions);
@@ -321,21 +612,12 @@ class OverviewManager {
       hourBlock.appendChild(hourLabel);
 
       hourlyGroups[hour].forEach(session => {
-  console.log('Block schedule session:', session);
-  console.log('Session title:', session.title);
         const sessionBlock = document.createElement('div');
         const startTime = new Date(session.startTime);
-        const totalSeconds = Math.round(session.duration / 1000);
-        const minutes = Math.floor(totalSeconds / 60);
-        const seconds = totalSeconds % 60;
-        const durationStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-        let displayName = session.title || this.getSiteName(session.domain);
-
-        // Replace extension ID with friendly name before rendering
-        if (displayName === "napbabpdghpbnpknamdcapnclgohebnm" || session.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
-          displayName = "What's Going ON Here? - Overview";
+        let displayName = this.getSiteName(session.domain);
+        if (session.domain === "napbabpdghpbnpknamdcapnclgohebnm") {
+          displayName = "What's Going ON Here?";
         }
-
         sessionBlock.style.cssText = `
           background: #f8fafc;
           border: 1px solid #e2e8f0;
@@ -344,14 +626,25 @@ class OverviewManager {
           margin-bottom: 4px;
           font-size: 12px;
         `;
-
-        sessionBlock.innerHTML = `
-          <div style="font-weight: 500; color: #374151;">${displayName}</div>
-          <div style="color: #6b7280;">
-            ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${durationStr}
-          </div>
-        `;
-
+        if (session.domain === 'browser-startup' || session.domain === 'browser-closed') {
+          sessionBlock.innerHTML = `
+            <div style="font-weight: 500; color: #374151;">${displayName}</div>
+            <div style="color: #6b7280;">
+              ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+            </div>
+          `;
+        } else {
+          const totalSeconds = Math.round(session.duration / 1000);
+          const minutes = Math.floor(totalSeconds / 60);
+          const seconds = totalSeconds % 60;
+          const durationStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+          sessionBlock.innerHTML = `
+            <div style="font-weight: 500; color: #374151;">${displayName}</div>
+            <div style="color: #6b7280;">
+              ${startTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} • ${durationStr}
+            </div>
+          `;
+        }
         hourBlock.appendChild(sessionBlock);
       });
 
@@ -370,32 +663,24 @@ class OverviewManager {
     const consolidated = [];
     let currentSession = { ...sortedSessions[0] };
 
-    console.log('Original sessions:', sortedSessions.length);
-    console.log('First session:', currentSession);
-
     for (let i = 1; i < sortedSessions.length; i++) {
       const session = sortedSessions[i];
       const timeBetween = session.startTime - currentSession.endTime;
-      
-      console.log(`Comparing ${session.domain} (${new Date(session.startTime).toLocaleTimeString()}) with ${currentSession.domain} (${new Date(currentSession.endTime).toLocaleTimeString()}), gap: ${Math.round(timeBetween/1000)}s`);
       
       // If same domain and gap is less than 5 minutes (300000ms), merge them
       if (session.domain === currentSession.domain && timeBetween <= 300000) {
         // Extend the current session
         currentSession.endTime = session.endTime;
         currentSession.duration = currentSession.endTime - currentSession.startTime;
-        console.log(`Merged session, new duration: ${Math.round(currentSession.duration/60000)}min`);
       } else {
         // Different domain or gap too large, start new session
         consolidated.push(currentSession);
         currentSession = { ...session };
-        console.log(`Added session: ${currentSession.domain}, ${Math.round(currentSession.duration/60000)}min`);
       }
     }
     
     // Don't forget the last session
     consolidated.push(currentSession);
-    console.log(`Final consolidated sessions:`, consolidated.length);
     
     return consolidated;
   }
@@ -509,25 +794,25 @@ class OverviewManager {
   }
 
   resetTodaysSession() {
-    if (!confirm('Reset today\'s browsing session data?\n\nThis will clear:\n• All time tracking for today\n• Today\'s session history\n• Charts and stats will reset to 0\n\nThis action cannot be undone.')) {
+    if (!confirm('Reset today\'s browsing session data?\n\nThis will clear:\n• All event tracking for today\n• Today\'s activity log\n• Charts and stats will reset to 0\n\nThis action cannot be undone.')) {
       return;
     }
 
     const today = new Date().toDateString();
     
     // Get current data and remove only today's entries
-    chrome.storage.local.get(['timeTracking', 'sessionHistory'], (result) => {
+    chrome.storage.local.get(['timeTracking', 'eventLog'], (result) => {
       const timeTracking = result.timeTracking || {};
-      const sessionHistory = result.sessionHistory || {};
+      const eventLog = result.eventLog || {};
       
       // Remove today's data
       delete timeTracking[today];
-      delete sessionHistory[today];
+      delete eventLog[today];
       
       // Save the updated data
       chrome.storage.local.set({ 
         timeTracking: timeTracking,
-        sessionHistory: sessionHistory 
+        eventLog: eventLog 
       }, () => {
         if (chrome.runtime.lastError) {
           this.showStatus('Failed to reset session data', 'error');
