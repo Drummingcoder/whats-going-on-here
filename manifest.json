@@ -3,8 +3,11 @@
   "name": "What's Going ON Here?",
   "version": "0.1",
   "description": "Boost your productivity by tracking web activity and blocking distracting websites. Features include time tracking, customizable block lists, and a progress journal.",
-  "permissions": ["tabs", "storage", "declarativeNetRequest"],
+  "permissions": ["tabs", "storage", "declarativeNetRequest", "declarativeNetRequestWithHostAccess", "declarativeNetRequestFeedback"],
   "optional_permissions": ["history", "notifications"],
+  "declarative_net_request": {
+    "rule_resources": []
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "What's Going ON Here? Settings"

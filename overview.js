@@ -11,6 +11,8 @@ class OverviewManager {
       // UI elements
       toggleSettingsBtn: document.getElementById("toggleSettings"),
       settingsPanel: document.getElementById("settingsPanel"),
+      overviewContent: document.getElementById("overviewContent"),
+      settingsContent: document.getElementById("settingsContent"),
       
       // Date selector elements
       dateDisplay: document.getElementById("dateDisplay"),
@@ -23,6 +25,14 @@ class OverviewManager {
       sitesVisited: document.getElementById("sitesVisited"),
       totalLabel: document.getElementById("totalLabel"),
       
+      // Blocking elements
+      newBlockedSite: document.getElementById("newBlockedSite"),
+      addBlockedSiteBtn: document.getElementById("addBlockedSite"),
+      debugRulesBtn: document.getElementById("debugRules"),
+      blockedSitesList: document.getElementById("blockedSitesList"),
+      emptyState: document.getElementById("emptyState"),
+      redirectUrl: document.getElementById("redirectUrl"),
+      
       // Chart elements
       pieChart: document.getElementById("pieChart"),
       pieChartPlaceholder: document.getElementById("pieChartPlaceholder"),
@@ -32,11 +42,13 @@ class OverviewManager {
 
     this.pieChartInstance = null;
     this.selectedDate = new Date();
+    this.blockedSites = []; // Initialize blocked sites array
     this.init();
   }
 
   init() {
     this.loadSettings();
+    this.loadBlockingSettings();
     this.initializeDateSelector();
     this.loadTimeData();
     this.attachEventListeners();
@@ -48,6 +60,71 @@ class OverviewManager {
         this.elements.sitesTextarea.value = result.allowedSites.join('\n');
       }
     });
+  }
+
+  loadBlockingSettings() {
+    chrome.storage.sync.get(['blockedSitesList', 'redirectUrl'], (result) => {
+      // Load blocked sites list
+      this.blockedSites = result.blockedSitesList || [];
+      this.renderBlockedSitesList();
+      
+      // Load redirect URL
+      this.elements.redirectUrl.value = result.redirectUrl || '';
+    });
+    
+    // Hide blocking status on load
+    this.showBlockingStatus('', '');
+  }
+
+  renderBlockedSitesList() {
+    const listContainer = this.elements.blockedSitesList;
+    const emptyState = this.elements.emptyState;
+    
+    // Clear existing items except empty state
+    const items = listContainer.querySelectorAll('.blocked-site-item');
+    items.forEach(item => item.remove());
+    
+    if (this.blockedSites.length === 0) {
+      emptyState.style.display = 'block';
+    } else {
+      emptyState.style.display = 'none';
+      
+      this.blockedSites.forEach((siteData, index) => {
+        const item = this.createBlockedSiteItem(siteData, index);
+        listContainer.appendChild(item);
+      });
+    }
+  }
+
+  createBlockedSiteItem(siteData, index) {
+    const item = document.createElement('div');
+    item.className = 'blocked-site-item';
+    
+    const isActive = siteData.enabled !== false; // Default to true if not specified
+    
+    item.innerHTML = `
+      <div class="blocked-site-info">
+        <div class="blocked-site-domain">${siteData.domain}</div>
+        <div class="blocked-site-status ${isActive ? 'active' : 'inactive'}">
+          ${isActive ? 'Blocked' : 'Inactive'}
+        </div>
+      </div>
+      <div class="blocked-site-actions">
+        <button class="toggle-block-btn ${isActive ? '' : 'inactive'}" data-index="${index}">
+          ${isActive ? 'Disable' : 'Enable'}
+        </button>
+        <button class="remove-site-btn" data-index="${index}">×</button>
+      </div>
+    `;
+    
+    // Add event listeners
+    const toggleBtn = item.querySelector('.toggle-block-btn');
+    const removeBtn = item.querySelector('.remove-site-btn');
+    
+    toggleBtn.addEventListener('click', () => this.toggleSiteBlocking(index));
+    removeBtn.addEventListener('click', () => this.removeSite(index));
+    
+    return item;
   }
 
   initializeDateSelector() {
@@ -165,6 +242,36 @@ class OverviewManager {
           sessions.push({
             domain: 'browser-closed',
             title: 'Browser Closed',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
+        case 'device_sleep_inferred':
+          // Add as a point event (no duration)
+          sessions.push({
+            domain: 'device-sleep',
+            title: 'Device Sleep (Inferred)',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
+        case 'device_wakeup_inferred':
+          // Add as a point event (no duration)
+          sessions.push({
+            domain: 'device-wakeup',
+            title: 'Device Wakeup (Inferred)',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
+        case 'extended_inactivity':
+          // Add as a point event (no duration)
+          sessions.push({
+            domain: 'extended-inactivity',
+            title: 'Extended Inactivity',
             startTime: event.timestamp,
             endTime: event.timestamp,
             duration: 0
@@ -318,8 +425,11 @@ class OverviewManager {
     return sessions.filter(session =>
       session.duration > 1000 ||
       session.domain === 'browser-startup' ||
-      session.domain === 'browser-closed'
-    ); // Filter out very short sessions, but always include browser open/close events
+      session.domain === 'browser-closed' ||
+      session.domain === 'device-sleep' ||
+      session.domain === 'device-wakeup' ||
+      session.domain === 'extended-inactivity'
+    ); // Filter out very short sessions, but always include browser open/close events and device state events
   }
 
   calculateAggregatedTimeFromSessions(sessions) {
@@ -374,16 +484,36 @@ class OverviewManager {
     this.elements.resetBtn.addEventListener("click", () => this.resetSettings());
     this.elements.resetSessionBtn.addEventListener("click", () => this.resetTodaysSession());
     
-    // Auto-resize textarea
+    // Blocking settings
+    this.elements.addBlockedSiteBtn.addEventListener("click", () => this.addBlockedSite());
+    this.elements.debugRulesBtn.addEventListener("click", () => this.debugBlockingRules());
+    this.elements.newBlockedSite.addEventListener("keypress", (e) => {
+      if (e.key === 'Enter') {
+        this.addBlockedSite();
+      }
+    });
+    this.elements.redirectUrl.addEventListener("change", () => this.saveRedirectUrl());
+    
+    // Auto-resize textareas
     this.elements.sitesTextarea.addEventListener("input", () => {
       this.autoResizeTextarea(this.elements.sitesTextarea);
     });
   }
 
   toggleSettingsPanel() {
-    this.elements.settingsPanel.classList.toggle('active');
-    const isActive = this.elements.settingsPanel.classList.contains('active');
-    this.elements.toggleSettingsBtn.textContent = isActive ? 'Close Settings' : 'Settings';
+    const isSettingsVisible = this.elements.settingsContent.style.display === 'block';
+    
+    if (isSettingsVisible) {
+      // Show overview, hide settings
+      this.elements.overviewContent.style.display = 'block';
+      this.elements.settingsContent.style.display = 'none';
+      this.elements.toggleSettingsBtn.textContent = 'Settings';
+    } else {
+      // Hide overview, show settings
+      this.elements.overviewContent.style.display = 'none';
+      this.elements.settingsContent.style.display = 'block';
+      this.elements.toggleSettingsBtn.textContent = 'Close Settings';
+    }
   }
 
   displayStatsOverview(aggregatedData, hasData) {
@@ -545,7 +675,12 @@ class OverviewManager {
       // Special cases
       'away-from-chrome': 'Away From Chrome',
       'chrome-tab-unknown': 'Chrome Tab (unknown)',
-      'chrome://newtab': 'New Tab (Chrome)'
+      'chrome://newtab': 'New Tab (Chrome)',
+      'browser-startup': 'Browser Opened',
+      'browser-closed': 'Browser Closed',
+      'device-sleep': 'Device Sleep (Inferred)',
+      'device-wakeup': 'Device Wakeup (Inferred)',
+      'extended-inactivity': 'Extended Inactivity'
     };
     return siteNames[domain] || domain;
   }
@@ -626,7 +761,9 @@ class OverviewManager {
           margin-bottom: 4px;
           font-size: 12px;
         `;
-        if (session.domain === 'browser-startup' || session.domain === 'browser-closed') {
+        if (session.domain === 'browser-startup' || session.domain === 'browser-closed' || 
+            session.domain === 'device-sleep' || session.domain === 'device-wakeup' || 
+            session.domain === 'extended-inactivity') {
           sessionBlock.innerHTML = `
             <div style="font-weight: 500; color: #374151;">${displayName}</div>
             <div style="color: #6b7280;">
@@ -731,8 +868,64 @@ class OverviewManager {
   }
 
   isValidDomain(domain) {
-    const domainRegex = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9](?:\.[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9])*$/;
-    return domainRegex.test(domain) && domain.length <= 253;
+    if (!domain || typeof domain !== 'string') {
+      return false;
+    }
+    
+    // Basic length and character checks
+    if (domain.length === 0 || domain.length > 253) {
+      return false;
+    }
+    
+    // Cannot start or end with dot, dash, or have consecutive dots
+    if (domain.startsWith('.') || domain.endsWith('.') || 
+        domain.startsWith('-') || domain.endsWith('-') ||
+        domain.includes('..')) {
+      return false;
+    }
+    
+    // Must contain at least one dot (for TLD)
+    if (!domain.includes('.')) {
+      return false;
+    }
+    
+    // Split into parts and validate each
+    const parts = domain.split('.');
+    if (parts.length < 2) {
+      return false;
+    }
+    
+    // Validate each part
+    for (const part of parts) {
+      if (part.length === 0 || part.length > 63) {
+        return false;
+      }
+      
+      // Each part must start and end with alphanumeric
+      if (!/^[a-zA-Z0-9]/.test(part) || !/[a-zA-Z0-9]$/.test(part)) {
+        return false;
+      }
+      
+      // Each part can only contain alphanumeric and hyphens
+      if (!/^[a-zA-Z0-9-]+$/.test(part)) {
+        return false;
+      }
+    }
+    
+    // TLD (last part) should be at least 2 characters and only letters
+    const tld = parts[parts.length - 1];
+    if (tld.length < 2 || !/^[a-zA-Z]+$/.test(tld)) {
+      return false;
+    }
+    
+    // Additional checks for common invalid patterns
+    if (domain.includes('localhost') || 
+        domain.match(/^\d+\.\d+\.\d+\.\d+$/) || // IP address
+        domain.includes(' ')) {
+      return false;
+    }
+    
+    return true;
   }
 
   getSitesFromTextarea() {
@@ -751,6 +944,14 @@ class OverviewManager {
     setTimeout(() => {
       status.style.display = 'none';
     }, 3000);
+  }
+
+  showBlockingStatus(message, type = '') {
+    const el = document.getElementById('blockingStatusMessage');
+    if (!el) return;
+    el.textContent = message;
+    el.style.display = message ? 'block' : 'none';
+    el.style.color = type === 'error' ? '#dc2626' : '#667eea';
   }
 
   saveSettings() {
@@ -791,6 +992,213 @@ class OverviewManager {
   resetSaveButton() {
     this.elements.saveBtn.disabled = false;
     this.elements.saveBtn.textContent = 'Save Settings';
+  }
+
+  addBlockedSite() {
+    const rawDomain = this.elements.newBlockedSite.value.trim();
+    
+    if (!rawDomain) {
+      this.showStatus('Please enter a domain name', 'error');
+      return;
+    }
+    
+    // Normalize the domain (remove protocol, www, trailing slashes)
+    const normalizedDomain = this.normalizeDomain(rawDomain);
+    
+    if (!normalizedDomain) {
+      this.showStatus('Please enter a valid domain name', 'error');
+      return;
+    }
+    
+    if (!this.isValidDomain(normalizedDomain)) {
+      this.showStatus(`"${normalizedDomain}" is not a valid domain name`, 'error');
+      return;
+    }
+    
+    // Check if already exists (including www variations)
+    if (this.isDomainAlreadyBlocked(normalizedDomain)) {
+      this.showStatus(`"${normalizedDomain}" is already in your blocked list`, 'error');
+      return;
+    }
+    
+    // Add to list
+    this.blockedSites.push({
+      domain: normalizedDomain,
+      enabled: true,
+      addedAt: Date.now()
+    });
+    
+    // Clear input
+    this.elements.newBlockedSite.value = '';
+    
+    // Save and update
+    this.saveBlockedSitesList();
+  }
+
+  normalizeDomain(domain) {
+    try {
+      // Remove protocol if present
+      let normalized = domain.replace(/^https?:\/\//, '');
+      
+      // Remove www prefix if present
+      normalized = normalized.replace(/^www\./, '');
+      
+      // Remove trailing slash and path
+      normalized = normalized.split('/')[0];
+      
+      // Remove port if present
+      normalized = normalized.split(':')[0];
+      
+      // Convert to lowercase
+      normalized = normalized.toLowerCase().trim();
+      
+      return normalized || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  isDomainAlreadyBlocked(domain) {
+    const normalizedInput = this.normalizeDomain(domain);
+    
+    return this.blockedSites.some(site => {
+      const normalizedExisting = this.normalizeDomain(site.domain);
+      return normalizedExisting === normalizedInput;
+    });
+  }
+
+  toggleSiteBlocking(index) {
+    if (index >= 0 && index < this.blockedSites.length) {
+      this.blockedSites[index].enabled = !this.blockedSites[index].enabled;
+      this.saveBlockedSitesList();
+    }
+  }
+
+  removeSite(index) {
+    if (index >= 0 && index < this.blockedSites.length) {
+      const domain = this.blockedSites[index].domain;
+      if (confirm(`Remove "${domain}" from blocked sites?`)) {
+        this.blockedSites.splice(index, 1);
+        this.saveBlockedSitesList();
+      }
+    }
+  }
+
+  saveRedirectUrl() {
+    const redirectUrl = this.elements.redirectUrl.value.trim();
+    
+    if (redirectUrl && !this.isValidUrl(redirectUrl)) {
+      this.showStatus("Redirect URL is not valid", 'error');
+      return;
+    }
+    
+    chrome.storage.sync.set({ redirectUrl: redirectUrl }, () => {
+      if (chrome.runtime.lastError) {
+        this.showStatus('Failed to save redirect URL: ' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      this.updateBlockingRules();
+    });
+  }
+
+  saveBlockedSitesList() {
+    chrome.storage.sync.set({ blockedSitesList: this.blockedSites }, () => {
+      if (chrome.runtime.lastError) {
+        this.showStatus('Failed to save blocked sites: ' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      
+      this.renderBlockedSitesList();
+      this.updateBlockingRules();
+      this.showStatus('Blocked sites updated successfully!');
+    });
+  }
+
+  updateBlockingRules() {
+    this.showBlockingStatus('Updating blocking rules...', '');
+    
+    // Get enabled sites only
+    const enabledSites = this.blockedSites
+      .filter(site => site.enabled !== false)
+      .map(site => site.domain);
+    
+    const redirectUrl = this.elements.redirectUrl.value.trim();
+    
+    const blockingSettings = {
+      blockedSites: enabledSites,
+      redirectUrl: redirectUrl || ''
+    };
+    
+    console.log('Sending blocking rules update:', blockingSettings);
+    
+    // Try with a shorter timeout
+    const messageTimeout = setTimeout(() => {
+      console.log('Message timeout - trying alternative approach');
+      this.updateBlockingRulesAlternative(blockingSettings);
+    }, 3000);
+    
+    chrome.runtime.sendMessage({
+      action: 'updateBlockingRules',
+      settings: blockingSettings
+    }, (response) => {
+      clearTimeout(messageTimeout);
+      console.log('Blocking rules response:', response);
+      
+      if (chrome.runtime.lastError) {
+        console.error('Runtime error:', chrome.runtime.lastError);
+        this.updateBlockingRulesAlternative(blockingSettings);
+        return;
+      }
+      
+      if (response && response.success) {
+        this.showBlockingStatus('Blocking rules are active!', '');
+      } else {
+        const errorMsg = response && response.error ? 
+          `Error: ${response.error}` : 
+          'Settings saved, but blocking rules may not be active yet';
+        this.showBlockingStatus(errorMsg, 'error');
+        console.error('Blocking rules update failed:', response);
+      }
+    });
+  }
+
+  updateBlockingRulesAlternative(blockingSettings) {
+    // Fallback: Just save settings and show a message
+    console.log('Using alternative blocking rules update');
+    chrome.storage.sync.set({
+      pendingBlockingUpdate: blockingSettings,
+      blockingUpdateTimestamp: Date.now()
+    }, () => {
+      if (chrome.runtime.lastError) {
+        this.showBlockingStatus('Failed to save blocking settings', 'error');
+      } else {
+        this.showBlockingStatus('Settings saved. Reload extension if blocking doesn\'t work.', '');
+        // Trigger a page reload of the background script
+        chrome.runtime.reload && chrome.runtime.reload();
+      }
+    });
+  }
+
+  debugBlockingRules() {
+    chrome.runtime.sendMessage({ action: 'debugBlockingRules' }, (response) => {
+      if (response && response.rules) {
+        console.log('Active blocking rules:', response.rules);
+        const ruleCount = response.rules.length;
+        const enabledSites = this.blockedSites.filter(site => site.enabled !== false).length;
+        alert(`Debug Info:\n\nEnabled sites: ${enabledSites}\nActive rules: ${ruleCount}\n\nCheck console for detailed rule information.`);
+      } else {
+        alert('Failed to get blocking rules debug info');
+      }
+    });
+  }
+
+  isValidUrl(string) {
+    try {
+      new URL(string);
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   resetTodaysSession() {
