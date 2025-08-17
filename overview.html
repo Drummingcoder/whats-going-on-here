@@ -13,8 +13,8 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-      background: #ffffff;
-      color: #1a1a1a;
+      background: #f8fafc;
+      color: #1e293b;
       min-height: 100vh;
       margin: 0;
       padding: 0;
@@ -90,7 +90,7 @@
 
     .date-nav-btn {
       background: #ffffff;
-      border: 1px solid #d1d5db;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       width: 40px;
       height: 40px;
@@ -99,13 +99,14 @@
       justify-content: center;
       cursor: pointer;
       font-size: 18px;
-      color: #374151;
+      color: #64748b;
       transition: all 0.2s ease;
     }
 
     .date-nav-btn:hover {
-      background: #f9fafb;
-      border-color: #9ca3af;
+      background: #f8fafc;
+      border-color: #38bdf8;
+      color: #38bdf8;
       transform: translateY(-1px);
     }
 
@@ -118,17 +119,17 @@
     .date-display {
       font-size: 18px;
       font-weight: 600;
-      color: #374151;
+      color: #1e293b;
       min-width: 200px;
       text-align: center;
     }
 
     .date-picker {
       padding: 8px 12px;
-      border: 1px solid #d1d5db;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       background: #ffffff;
-      color: #374151;
+      color: #1e293b;
       font-family: inherit;
       font-size: 14px;
       cursor: pointer;
@@ -222,7 +223,7 @@
     }
 
     .chart-placeholder {
-      color: #94a3b8;
+      color: #64748b;
       text-align: center;
       font-size: 14px;
     }
@@ -298,7 +299,7 @@
     }
 
     .toggle-switch:checked {
-      background: #667eea;
+      background: #10b981;
     }
 
     .toggle-switch::before {
@@ -320,7 +321,7 @@
     .toggle-label {
       cursor: pointer;
       font-weight: 600;
-      color: #374151;
+      color: #1e293b;
     }
 
     .toggle-text {
@@ -376,7 +377,7 @@
 
     .blocked-site-domain {
       font-weight: 600;
-      color: #374151;
+      color: #1e293b;
       font-size: 14px;
     }
 
@@ -389,13 +390,13 @@
 
     .blocked-site-status.active {
       background: #fef2f2;
-      color: #dc2626;
+      color: #f43f5e;
       border: 1px solid #fecaca;
     }
 
     .blocked-site-status.inactive {
       background: #f0fdf4;
-      color: #16a34a;
+      color: #10b981;
       border: 1px solid #bbf7d0;
     }
 
@@ -406,7 +407,7 @@
     }
 
     .toggle-block-btn {
-      background: #667eea;
+      background: #38bdf8;
       color: white;
       border: none;
       border-radius: 6px;
@@ -418,20 +419,20 @@
     }
 
     .toggle-block-btn:hover {
-      background: #5a67d8;
+      background: #0ea5e9;
       transform: translateY(-1px);
     }
 
     .toggle-block-btn.inactive {
-      background: #16a34a;
+      background: #10b981;
     }
 
     .toggle-block-btn.inactive:hover {
-      background: #15803d;
+      background: #059669;
     }
 
     .remove-site-btn {
-      background: #dc2626;
+      background: #f43f5e;
       color: white;
       border: none;
       border-radius: 6px;
@@ -442,7 +443,7 @@
     }
 
     .remove-site-btn:hover {
-      background: #b91c1c;
+      background: #e11d48;
       transform: translateY(-1px);
     }
 
@@ -651,17 +652,17 @@
       display: block;
       margin-bottom: 8px;
       font-weight: 600;
-      color: #374151;
+      color: #1e293b;
       font-size: 14px;
     }
 
     .form-input, .form-textarea {
       width: 100%;
       padding: 12px 16px;
-      border: 1px solid #d1d5db;
+      border: 1px solid #e2e8f0;
       border-radius: 8px;
       background: #ffffff;
-      color: #374151;
+      color: #1e293b;
       font-family: inherit;
       font-size: 14px;
       transition: all 0.2s ease;
@@ -839,138 +840,83 @@
     <!-- Settings Content (shown when in settings mode) -->
     <div id="settingsContent" style="display: none;">
       <!-- Website Blocking Section -->
-      <div class="blocking-section" id="blockingSection">
-        <div class="section-title">
-          Website Blocking
-        </div>
-        
-        <div class="blocking-container">
-          <div id="blockingStatusMessage" class="form-help" style="margin-bottom:8px;color:#667eea;display:none;"></div>
-          
-          <!-- Add Website Form -->
-          <div class="form-group">
-            <label class="form-label" for="newBlockedSite">
-              Add Website to Block
-            </label>
-            <div style="display: flex; gap: 8px; align-items: flex-end;">
-              <input 
-                type="text" 
-                class="form-input" 
-                id="newBlockedSite" 
-                placeholder="Enter domain (e.g., facebook.com)"
-                style="flex: 1;"
-              >
-            <div class="button-group">
-              <button type="button" id="addBlockedSite" class="btn btn-primary">Add</button>
-            </div>
-            </div>
-            <div class="form-help">
-              Enter a website domain to add to your blocking list.
-            </div>
-          </div>
-          
-          <!-- Redirect URL Setting -->
-          <div class="form-group">
-            <label class="form-label" for="redirectUrl">
-              Redirect URL (Optional)
-            </label>
-            <input 
-              type="url" 
-              class="form-input" 
-              id="redirectUrl" 
-              placeholder="https://example.com/focus-page"
-            >
-            <div class="form-help">
-              Custom page to redirect to when blocked sites are accessed. Leave empty for default block page.
-            </div>
-          </div>
-          
-          <!-- Password Protection Setting -->
-          <div class="form-group">
-            <label class="form-label" for="blockingPassword">
-              Password Protection (Optional)
-            </label>
-            <div style="display: flex; gap: 8px; align-items: flex-end;">
-              <input 
-                type="password" 
-                class="form-input" 
-                id="blockingPassword" 
-                placeholder="Enter password to protect blocking settings"
-                style="flex: 1;"
-              >
-              <button type="button" id="savePassword" class="btn btn-secondary">Save</button>
-            </div>
-            <div class="form-help">
-              Set a password to prevent websites from being unblocked or removed without authorization. 
-              <br><strong>Note:</strong> If a password is already set, you must enter the current password before making changes.
-              <br>Leave empty and save to disable password protection.
-            </div>
-          </div>
-          
-          <!-- Blocked Sites List -->
-          <div class="form-group">
-            <label class="form-label">
-              Blocked Websites List
-            </label>
-            <div id="blockedSitesList" class="blocked-sites-list">
-              <div class="empty-state" id="emptyState">
-                <span style="color: #94a3b8; font-style: italic;">No websites blocked yet. Add a website above to get started.</span>
-              </div>
-            </div>
-          </div>
 
-          <!-- Blocking Schedule -->
-          <div class="form-group">
-            <label class="form-label">
-              <span>📅</span> Blocking Schedule (Optional)
-            </label>
-            <div class="form-help" style="margin-bottom: 16px;">
-              Set specific days and times when websites should be blocked. Leave empty to block 24/7.
+        <!-- Blocking Rules Section -->
+        <div class="blocking-section" id="blockingRulesSection">
+          <div class="section-title">Blocking Rules</div>
+          <div class="blocking-container">
+            <div id="blockingStatusMessage" class="form-help" style="margin-bottom:8px;color:#667eea;display:none;"></div>
+            <div class="form-help" style="margin-bottom:12px;color:#dc2626;">
+              <strong>Note:</strong> After adding or changing a blocking rule, close and reopen your browser to ensure the new rules are fully applied to all tabs.
             </div>
-            
-            <div id="scheduleContainer" class="schedule-container">
-              <div class="schedule-controls">
-                <button type="button" id="addScheduleRule" class="btn btn-secondary" style="margin-bottom: 16px;">
-                  + Add Schedule Rule
-                </button>
+            <!-- Add Website Form -->
+            <div class="form-group">
+              <label class="form-label" for="newBlockedSite">Add Website to Block</label>
+              <div style="display: flex; gap: 8px; align-items: flex-end;">
+                <input type="text" class="form-input" id="newBlockedSite" placeholder="Enter domain (e.g., facebook.com)" style="flex: 1;">
+                <div class="button-group">
+                  <button type="button" id="addBlockedSite" class="btn btn-primary">Add</button>
+                </div>
               </div>
-              <div id="scheduleRulesList" class="schedule-rules-list">
-                <div class="empty-state" id="scheduleEmptyState">
-                  <span style="color: #94a3b8; font-style: italic;">No schedule rules set. Blocking will be active 24/7.</span>
+              <div class="form-help">Enter a website domain to add to your blocking list.</div>
+            </div>
+            <!-- Redirect URL Setting -->
+            <div class="form-group">
+              <label class="form-label" for="redirectUrl">Redirect URL (Optional)</label>
+              <input type="url" class="form-input" id="redirectUrl" placeholder="https://example.com/focus-page">
+              <div class="form-help">Custom page to redirect to when blocked sites are accessed. Leave empty for default block page.</div>
+            </div>
+            <!-- Blocked Sites List -->
+            <div class="form-group">
+              <label class="form-label">Blocked Websites List</label>
+              <div id="blockedSitesList" class="blocked-sites-list">
+                <div class="empty-state" id="emptyState">
+                  <span style="color: #94a3b8; font-style: italic;">No websites blocked yet. Add a website above to get started.</span>
+                </div>
+              </div>
+            </div>
+            <!-- Blocking Schedule -->
+            <div class="form-group">
+              <label class="form-label"><span>📅</span> Blocking Schedule (Optional)</label>
+              <div class="form-help" style="margin-bottom: 16px;">Set specific days and times when websites should be blocked. Leave empty to block 24/7.</div>
+              <div id="scheduleContainer" class="schedule-container">
+                <div class="schedule-controls">
+                  <button type="button" id="addScheduleRule" class="btn btn-secondary" style="margin-bottom: 16px;">+ Add Schedule Rule</button>
+                </div>
+                <div id="scheduleRulesList" class="schedule-rules-list">
+                  <div class="empty-state" id="scheduleEmptyState">
+                    <span style="color: #94a3b8; font-style: italic;">No schedule rules set. Blocking will be active 24/7.</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+
+        <!-- Password Section -->
+        <div class="blocking-section" id="passwordSection">
+          <div class="section-title">Password</div>
+          <div class="blocking-container">
+            <!-- Password Protection Setting -->
+            <div class="form-group">
+              <label class="form-label" for="blockingPassword">Password Protection (Optional)</label>
+              <div style="display: flex; gap: 8px; align-items: flex-end;">
+                <input type="password" class="form-input" id="blockingPassword" placeholder="Enter password to protect blocking settings" style="flex: 1;">
+                <button type="button" id="savePassword" class="btn btn-secondary">Save</button>
+              </div>
+              <div class="form-help">
+                Set a password to prevent websites from being unblocked or removed without authorization. <br><strong>Note:</strong> If a password is already set, you must enter the current password before making changes.<br>Leave empty and save to disable password protection.
+              </div>
+            </div>
+          </div>
+        </div>
 
       <!-- Extension Settings Panel -->
       <div class="settings-panel active" id="settingsPanel">
         <div class="section-title">
           <span>⚙️</span> Extension Settings
         </div>
-        
-        <div class="form-group">
-          <label class="form-label" for="monitoredSites">
-            Monitored Sites
-          </label>
-          <textarea 
-            class="form-textarea"
-            id="monitoredSites" 
-            placeholder="Enter one domain per line:&#10;youtube.com&#10;twitter.com&#10;facebook.com"
-          ></textarea>
-          <div class="form-help">
-            Enter website domains you want to track time for.
-          </div>
-        </div>
-
-        <div class="button-group">
-          <button type="button" id="resetSettings" class="btn btn-secondary">Reset All</button>
-          <button type="button" id="saveSettings" class="btn btn-primary">Save Settings</button>
-        </div>
-        
-        <div class="divider"></div>
-        
+  <!-- Removed Reset All and Save Settings buttons -->
         <div class="form-group">
           <label class="form-label">Developer Tools</label>
           <button type="button" id="resetSession" class="btn btn-secondary" style="width: 100%;">

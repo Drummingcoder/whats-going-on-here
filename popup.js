@@ -1,30 +1,71 @@
 class SimplePopupManager {
   timerId = null;
-  
   constructor() {
     this.activeTabDomain = null;
     this.activeTabTime = 0;
+    this.sessionStartTimestamp = null;
+    this.activeTabTitle = null;
+    this.totalTimeToday = 0;
+    this.tab = null;
     this.init();
   }
 
   async init() {
     try {
-      await this.loadCurrentSessionData();
+      await this.fetchSessionDataOnce();
       this.setupEventListeners();
-      this.startLiveUpdate();
+      this.startTimerUpdate();
     } catch (error) {
       console.error('Popup initialization error:', error);
       this.showNoActivity();
     }
   }
 
-  startLiveUpdate() {
-    // Clear any previous timer
+  async fetchSessionDataOnce() {
+    // Get current active tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || !tab.url) {
+      this.showNoActivity();
+      return;
+    }
+    this.tab = tab;
+    const currentDomain = this.extractDomain(tab.url);
+    this.activeTabDomain = currentDomain;
+
+    // Get session info for this specific tab from background script
+    const sessionData = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: "getTabSessionInfo", tabId: tab.id }, (response) => {
+        resolve(response || { domain: null, startTime: null, title: null });
+      });
+    });
+
+    this.sessionStartTimestamp = sessionData.startTime;
+    this.activeTabTitle = sessionData.title || tab.title || this.getSiteName(currentDomain);
+
+    // Get total time spent on this domain today
+    this.totalTimeToday = await this.getTotalTimeForDomain(currentDomain);
+
+    // Set initial session time
+    if (this.sessionStartTimestamp) {
+      this.activeTabTime = Math.floor((Date.now() - this.sessionStartTimestamp) / 1000);
+    } else {
+      this.activeTabTime = 0;
+    }
+
+    this.displayCurrentSession(this.tab, this.totalTimeToday);
+  }
+
+  startTimerUpdate() {
     if (this.timerId) {
       clearInterval(this.timerId);
     }
     this.timerId = setInterval(() => {
-      this.loadCurrentSessionData();
+      if (this.sessionStartTimestamp) {
+        this.activeTabTime = Math.floor((Date.now() - this.sessionStartTimestamp) / 1000);
+      } else {
+        this.activeTabTime = 0;
+      }
+      this.displayCurrentSession(this.tab, this.totalTimeToday);
     }, 1000);
   }
 
@@ -34,53 +75,77 @@ class SimplePopupManager {
       this.openOverviewWindow();
     });
 
-    // Reset session button
-    document.getElementById('resetSession')?.addEventListener('click', async () => {
-      await this.resetTodayData();
+  }
+
+  // loadCurrentSessionData is no longer needed
+
+  async getCurrentSessionFromEvents(domain) {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: "getEventLog" }, (response) => {
+        if (response && response.eventLog) {
+          const today = new Date().toDateString();
+          const todayEvents = response.eventLog[today] || [];
+          
+          // Find the current active session for this domain
+          const sessionInfo = this.findCurrentSession(todayEvents, domain);
+          resolve(sessionInfo);
+        } else {
+          resolve({ currentSessionSeconds: 0, title: null });
+        }
+      });
     });
   }
 
-  async loadCurrentSessionData() {
-    try {
-      // Get current active tab
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !tab.url) {
-        this.showNoActivity();
-        return;
-      }
-      
-      const currentDomain = this.extractDomain(tab.url);
-      
-      // Ask background for current active session info
-      chrome.runtime.sendMessage({ action: "getActiveSessionInfo" }, async (response) => {
-        if (response && response.domain && response.activeStartTime) {
-          // Calculate current session time
-          const sessionTimeSeconds = Math.floor((Date.now() - response.activeStartTime) / 1000);
-          this.activeTabDomain = response.domain;
-          this.activeTabTime = sessionTimeSeconds;
-          this.activeTabTitle = response.title;
-          
-          // Get total time spent on this domain today from event log
-          const totalTimeToday = await this.getTotalTimeForDomain(response.domain);
-          
-          this.displayCurrentSession(tab, totalTimeToday);
-        } else {
-          // No active session
-          this.activeTabDomain = currentDomain;
-          this.activeTabTime = 0;
-          this.activeTabTitle = null;
-          
-          // Still get total time for the current domain
-          const totalTimeToday = await this.getTotalTimeForDomain(currentDomain);
-          
-          this.displayCurrentSession(tab, totalTimeToday);
+  findCurrentSession(events, targetDomain) {
+    // Sort events by timestamp
+    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+    let currentSessionStart = null;
+    let currentSessionTitle = null;
+    let isInTargetSession = false;
+    // Go through events chronologically to find the current session
+    for (const event of sortedEvents) {
+      if (event.domain === targetDomain) {
+        // Events that start a session for our target domain
+        if (event.type === 'tab_activated' || event.type === 'browser_focus' || event.type === 'page_visible') {
+          if (!isInTargetSession) {
+            currentSessionStart = event.timestamp;
+            currentSessionTitle = event.title;
+            isInTargetSession = true;
+          }
         }
-      });
-
-    } catch (error) {
-      console.error('Error loading current session:', error);
-      this.showNoActivity();
+        // Events that end a session for our target domain
+        else if (event.type === 'tab_deactivated' || event.type === 'tab_closed' || event.type === 'browser_blur' || event.type === 'page_hidden') {
+          if (isInTargetSession) {
+            // Session ended, reset
+            currentSessionStart = null;
+            currentSessionTitle = null;
+            isInTargetSession = false;
+          }
+        }
+      } else {
+        // Event from a different domain
+        if (event.type === 'tab_activated' || event.type === 'browser_focus') {
+          // User switched to a different domain, end our session
+          if (isInTargetSession) {
+            currentSessionStart = null;
+            currentSessionTitle = null;
+            isInTargetSession = false;
+          }
+        }
+      }
     }
+    // Calculate current session time
+    let currentSessionSeconds = 0;
+    let currentSessionStartTimestamp = null;
+    if (currentSessionStart && isInTargetSession) {
+      currentSessionStartTimestamp = currentSessionStart;
+      currentSessionSeconds = Math.floor((Date.now() - currentSessionStart) / 1000);
+    }
+    return {
+      currentSessionSeconds,
+      currentSessionStartTimestamp,
+      title: currentSessionTitle
+    };
   }
 
   async getTotalTimeForDomain(domain) {
@@ -175,10 +240,10 @@ class SimplePopupManager {
     const siteName = this.getSiteName(this.activeTabDomain);
     const displayTitle = this.activeTabTitle || siteName;
     const totalMinutes = Math.floor(totalTimeToday / 60);
-
+    const faviconUrl = tab && tab.favIconUrl ? tab.favIconUrl : 'https://www.google.com/s2/favicons?domain=' + this.activeTabDomain;
     if (this.activeTabTime > 0) {
       currentSessionDiv.innerHTML = `
-        <div class="session-icon">🌐</div>
+        <div class="session-icon"><img src="${faviconUrl}" alt="favicon" style="width:24px;height:24px;border-radius:4px;"></div>
         <div class="session-site">${displayTitle}</div>
         <div class="session-domain">${this.activeTabDomain}</div>
         <div class="session-time">${this.formatTimeWithSeconds(this.activeTabTime)}</div>
@@ -187,7 +252,7 @@ class SimplePopupManager {
       `;
     } else {
       currentSessionDiv.innerHTML = `
-        <div class="session-icon">🆕</div>
+        <div class="session-icon"><img src="${faviconUrl}" alt="favicon" style="width:24px;height:24px;border-radius:4px;"></div>
         <div class="session-site">${displayTitle}</div>
         <div class="session-domain">${this.activeTabDomain}</div>
         <div class="session-time">0m 0s</div>

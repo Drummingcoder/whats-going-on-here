@@ -21,6 +21,9 @@ let activeStartTime = null;
 let activeDomain = null;
 let activeTitle = null;
 
+// Track active sessions by tab ID
+let activeSessionsByTab = new Map(); // tabId -> { domain, startTime, title }
+
 /* Event Listeners */
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.sync.get(['allowedSites', 'blockedSitesList', 'blockingScheduleRules', 'blockingPassword', 'redirectUrl'], (result) => {
@@ -110,6 +113,9 @@ chrome.windows.getAll({}, (windows) => {
       initializeBlockingRules();
     }
   });
+  
+  // Initialize tracking for currently active tab
+  initializeActiveTabTracking();
 }
 );
 
@@ -119,7 +125,21 @@ chrome.runtime.onStartup.addListener(() => {
   logEvent('browser_startup');
   startHeartbeat();
   initializeBlockingRules();
+  initializeActiveTabTracking();
 });
+
+// Initialize tracking for the currently active tab on startup
+function initializeActiveTabTracking() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs.length > 0) {
+      const tab = tabs[0];
+      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        console.log('Initializing tracking for active tab on startup:', tab.id, tab.url);
+        startTracking(tab.id, tab.url);
+      }
+    }
+  });
+}
 
 chrome.windows.onCreated.addListener(() => {
   updateActivity(); // Mark activity
@@ -160,6 +180,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
     } else {
       sendResponse({ domain: null, activeStartTime: null, title: null });
+    }
+    return true;
+  }
+
+  // Provide session info for a specific tab (for popup)
+  if (request.action === "getTabSessionInfo" && request.tabId) {
+    const session = activeSessionsByTab.get(request.tabId);
+    console.log('Popup requested session info for tab', request.tabId, 'found:', session);
+    
+    if (session) {
+      sendResponse({
+        domain: session.domain,
+        startTime: session.startTime,
+        title: session.title
+      });
+    } else {
+      // If no session found, but this is the active tab, use current active session data
+      if (request.tabId === activeTabId && activeDomain && activeStartTime) {
+        console.log('Using active session data as fallback');
+        // Add this session to our map for future requests
+        activeSessionsByTab.set(request.tabId, {
+          domain: activeDomain,
+          startTime: activeStartTime,
+          title: activeTitle
+        });
+        sendResponse({
+          domain: activeDomain,
+          startTime: activeStartTime,
+          title: activeTitle
+        });
+      } else {
+        sendResponse({ domain: null, startTime: null, title: null });
+      }
     }
     return true;
   }
@@ -278,6 +331,8 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === activeTabId) {
     stopTracking();
   }
+  // Remove session tracking for this tab
+  activeSessionsByTab.delete(tabId);
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
@@ -424,6 +479,7 @@ function startTracking(tabId, url) {
   let title = null;
   
   console.log('Starting tracking for tab:', tabId, 'URL:', url);
+  
   // Handle restricted URLs and new tab
   if (url.startsWith('chrome://newtab')) {
     domain = 'chrome://newtab';
@@ -440,19 +496,45 @@ function startTracking(tabId, url) {
     domain = 'chrome-tab-unknown';
     title = 'Chrome Tab (Unknown)';
   }
+  
+  continueStartTracking(tabId, domain, title);
+}
+
+function continueStartTracking(tabId, domain, title) {
 
   // Log tab deactivation event for previous tab if there was one
   if (activeDomain) {
     logEvent('tab_deactivated', activeDomain, activeTitle);
   }
 
+  // Check if we're already tracking this tab with the same domain
+  const existingSession = activeSessionsByTab.get(tabId);
+  let sessionStartTime;
+  
+  if (existingSession && existingSession.domain === domain) {
+    // Keep existing start time for same tab/domain
+    sessionStartTime = existingSession.startTime;
+    console.log('Preserving existing session for tab', tabId, 'domain:', domain, 'startTime:', new Date(sessionStartTime).toLocaleTimeString());
+  } else {
+    // New session - use current time
+    sessionStartTime = Date.now();
+    console.log('Starting new session for tab', tabId, 'domain:', domain, 'startTime:', new Date(sessionStartTime).toLocaleTimeString());
+  }
+
   // Update active tracking
   activeTabId = tabId;
   activeDomain = domain;
-  activeStartTime = Date.now();
+  activeStartTime = sessionStartTime;
   activeTitle = title;
   lastSessionActivity = Date.now();
   lastSessionDate = (new Date()).toDateString();
+
+  // Track this session in our tab map
+  activeSessionsByTab.set(tabId, {
+    domain: domain,
+    startTime: sessionStartTime,
+    title: title
+  });
 
   // Persist session info in storage
   chrome.storage.local.set({
@@ -464,21 +546,40 @@ function startTracking(tabId, url) {
     }
   });
 
-  // Only get page title for non-restricted URLs
-  if (!title) {
-    getPageTitle(tabId, (resolvedTitle) => {
-      activeTitle = resolvedTitle;
-      logEvent('tab_activated', domain, resolvedTitle);
-      // Start session timeout for new session
-      resetSessionTimeout();
-      // Start hard limit timer for new session
-      startSessionHardLimit();
-    });
-  } else {
-    logEvent('tab_activated', domain, title);
+  // Always try to get the actual page title
+  chrome.tabs.get(tabId, (tab) => {
+    if (tab && tab.title) {
+      const finalTitle = tab.title;
+      activeTitle = finalTitle;
+      // Update the session map with the actual title
+      if (activeSessionsByTab.has(tabId)) {
+        const session = activeSessionsByTab.get(tabId);
+        session.title = finalTitle;
+        activeSessionsByTab.set(tabId, session);
+        console.log('Updated session title for tab', tabId, 'to:', finalTitle);
+      }
+      logEvent('tab_activated', domain, finalTitle);
+    } else if (!title) {
+      // Fallback to getPageTitle for non-restricted URLs
+      getPageTitle(tabId, (resolvedTitle) => {
+        activeTitle = resolvedTitle;
+        // Update the session map with the resolved title
+        if (activeSessionsByTab.has(tabId)) {
+          const session = activeSessionsByTab.get(tabId);
+          session.title = resolvedTitle;
+          activeSessionsByTab.set(tabId, session);
+        }
+        logEvent('tab_activated', domain, resolvedTitle);
+      });
+    } else {
+      logEvent('tab_activated', domain, title);
+    }
+    
+    // Start session timeout for new session
     resetSessionTimeout();
+    // Start hard limit timer for new session
     startSessionHardLimit();
-  }
+  });
 }
 
 function stopTracking() {
@@ -788,18 +889,26 @@ function isRestrictedUrl(url) {
 }
 
 // Website blocking functionality
+let updateBlockingTimeout = null;
+
 function getSitesToBlockNow() {
   return new Promise((resolve) => {
     chrome.storage.sync.get(['blockedSitesList', 'blockingScheduleRules'], (result) => {
       const blockedSites = result.blockedSitesList || [];
       const scheduleRules = result.blockingScheduleRules || [];
       
+      console.log('getSitesToBlockNow - blockedSites:', blockedSites);
+      console.log('getSitesToBlockNow - scheduleRules:', scheduleRules);
+      
       const enabledSites = blockedSites
         .filter(site => site.enabled !== false)
         .map(site => site.domain);
       
+      console.log('getSitesToBlockNow - enabledSites:', enabledSites);
+      
       // If no schedule rules exist, block all enabled sites 24/7
       if (scheduleRules.length === 0) {
+        console.log('getSitesToBlockNow - No schedule rules, blocking all enabled sites 24/7:', enabledSites);
         resolve(enabledSites);
         return;
       }
@@ -808,36 +917,44 @@ function getSitesToBlockNow() {
       const currentDay = now.getDay(); // 0=Sunday, 1=Monday, etc.
       const currentTime = now.getHours() * 60 + now.getMinutes(); // Minutes since midnight
       
-      // Collect sites that should be blocked based on active schedule rules
+      // Option B: Block all enabled sites 24/7 unless a schedule rule exists for that site
       const sitesToBlock = new Set();
-      
-      scheduleRules.forEach(rule => {
-        // Check if current day is in rule's days
-        if (!rule.days.includes(currentDay)) {
-          return;
-        }
-        
-        // Parse time range
-        const [startHour, startMin] = rule.startTime.split(':').map(n => parseInt(n));
-        const [endHour, endMin] = rule.endTime.split(':').map(n => parseInt(n));
-        const startTime = startHour * 60 + startMin;
-        const endTime = endHour * 60 + endMin;
-        
-        // Check if current time is in rule's time range
-        const isInTimeRange = (startTime <= endTime) 
-          ? (currentTime >= startTime && currentTime <= endTime)
-          : (currentTime >= startTime || currentTime <= endTime); // Handle overnight ranges
-        
-        if (isInTimeRange) {
-          // Add all websites from this rule to the blocking list
-          rule.websites.forEach(website => {
-            if (enabledSites.includes(website)) {
-              sitesToBlock.add(website);
+
+      enabledSites.forEach(site => {
+        // Normalize site for comparison
+        const normalizedSite = normalizeDomain(site);
+        // Find all schedule rules that include this site (normalize for comparison)
+        const siteRules = scheduleRules.filter(rule =>
+          rule.websites && rule.websites.some(w => normalizeDomain(w) === normalizedSite)
+        );
+        console.log(`Checking site: ${site} (normalized: ${normalizedSite})`);
+        if (siteRules.length === 0) {
+          // No schedule rules for this site: block 24/7
+          sitesToBlock.add(site);
+        } else {
+          // There are schedule rules for this site: only block if any rule matches now
+          let shouldBlock = false;
+          for (const rule of siteRules) {
+            if (!rule.days.includes(currentDay)) continue;
+            const [startHour, startMin] = rule.startTime.split(':').map(n => parseInt(n));
+            const [endHour, endMin] = rule.endTime.split(':').map(n => parseInt(n));
+            const startTime = startHour * 60 + startMin;
+            const endTime = endHour * 60 + endMin;
+            const isInTimeRange = (startTime <= endTime)
+              ? (currentTime >= startTime && currentTime <= endTime)
+              : (currentTime >= startTime || currentTime <= endTime); // Handle overnight ranges
+            if (isInTimeRange) {
+              shouldBlock = true;
+              break;
             }
-          });
+          }
+          if (shouldBlock) {
+            sitesToBlock.add(site);
+          }
         }
       });
-      
+
+      console.log('getSitesToBlockNow - Sites to block (Option B):', Array.from(sitesToBlock));
       resolve(Array.from(sitesToBlock));
     });
   });
@@ -888,7 +1005,21 @@ function initializeBlockingRules() {
 }
 
 function updateBlockingRules(settings, callback) {
-  console.log('Updating blocking rules with settings:', settings);
+  console.log('updateBlockingRules called with settings:', settings);
+  
+  // Clear any existing timeout to prevent multiple rapid updates
+  if (updateBlockingTimeout) {
+    clearTimeout(updateBlockingTimeout);
+  }
+  
+  // Debounce the update to prevent race conditions
+  updateBlockingTimeout = setTimeout(() => {
+    performBlockingRulesUpdate(settings, callback);
+  }, 100);
+}
+
+function performBlockingRulesUpdate(settings, callback) {
+  console.log('performBlockingRulesUpdate called with settings:', settings);
   
   // Ensure we have valid settings
   if (!settings) {
@@ -897,9 +1028,12 @@ function updateBlockingRules(settings, callback) {
     return;
   }
   
+  console.log('performBlockingRulesUpdate - Sites to block:', settings.blockedSites);
+  console.log('performBlockingRulesUpdate - Redirect URL:', settings.redirectUrl);
+  
   // Use timeout to prevent hanging
   let responseTimeout = setTimeout(() => {
-    console.error('updateBlockingRules timed out');
+    console.error('performBlockingRulesUpdate timed out');
     if (callback) callback(false, 'Operation timed out');
     callback = null; // Prevent double callback
   }, 10000);
@@ -938,14 +1072,56 @@ function updateBlockingRules(settings, callback) {
           safeCallback(false, chrome.runtime.lastError.message);
         } else {
           console.log('Blocking rules updated successfully. Active rules:', newRules.length);
+          
+          // Force refresh tabs that match newly blocked sites
+          if (settings.blockedSites && settings.blockedSites.length > 0) {
+            refreshBlockedSiteTabs(settings.blockedSites);
+          }
+          
           safeCallback(true);
         }
       });
     });
   } catch (error) {
-    console.error('Exception in updateBlockingRules:', error);
+    console.error('Exception in performBlockingRulesUpdate:', error);
     safeCallback(false, error.message);
   }
+}
+
+function refreshBlockedSiteTabs(blockedSites) {
+  // Get all open tabs
+  chrome.tabs.query({}, (tabs) => {
+    if (chrome.runtime.lastError) {
+      console.warn('Could not query tabs to refresh blocked sites:', chrome.runtime.lastError);
+      return;
+    }
+    
+    tabs.forEach(tab => {
+      if (!tab.url) return;
+      
+      try {
+        const tabUrl = new URL(tab.url);
+        const tabDomain = tabUrl.hostname.replace(/^www\./, '').toLowerCase();
+        
+        // Check if this tab's domain matches any of the blocked sites
+        const isBlocked = blockedSites.some(blockedDomain => {
+          const normalizedBlocked = normalizeDomain(blockedDomain);
+          return normalizedBlocked === tabDomain || tabDomain.endsWith('.' + normalizedBlocked);
+        });
+        
+        if (isBlocked) {
+          console.log(`Refreshing tab for blocked site: ${tabDomain}`);
+          chrome.tabs.reload(tab.id, () => {
+            if (chrome.runtime.lastError) {
+              console.warn(`Could not reload tab ${tab.id}:`, chrome.runtime.lastError);
+            }
+          });
+        }
+      } catch (error) {
+        console.warn('Error processing tab URL:', tab.url, error);
+      }
+    });
+  });
 }
 
 function normalizeDomain(domain) {
@@ -975,6 +1151,12 @@ function createBlockingRules(blockedSites, redirectUrl) {
   const rules = [];
   let ruleId = 1;
   
+  // Ensure redirectUrl is valid (has protocol) if provided
+  let safeRedirectUrl = redirectUrl;
+  if (safeRedirectUrl && !/^https?:\/\//i.test(safeRedirectUrl)) {
+    safeRedirectUrl = 'https://' + safeRedirectUrl;
+  }
+
   blockedSites.forEach(domain => {
     // Normalize the domain consistently
     const cleanDomain = normalizeDomain(domain);
@@ -986,14 +1168,12 @@ function createBlockingRules(blockedSites, redirectUrl) {
     
     console.log(`Creating blocking rules for: ${cleanDomain}`);
     
-    // Strategy: Create comprehensive rules that catch all variations
-    
-    // Rule 1: Block exact domain with any path
+    // Rule 1: Block using urlFilter (covers domain and all subdomains)
     rules.push({
       id: ruleId++,
       priority: 1,
-      action: redirectUrl ? 
-        { type: "redirect", redirect: { url: redirectUrl } } : 
+      action: safeRedirectUrl ? 
+        { type: "redirect", redirect: { url: safeRedirectUrl } } : 
         { type: "block" },
       condition: {
         urlFilter: `||${cleanDomain}`,
@@ -1001,38 +1181,12 @@ function createBlockingRules(blockedSites, redirectUrl) {
       }
     });
     
-    // Rule 2: Block www version  
+    // Rule 2: Block using requestDomains (more reliable for some cases)
     rules.push({
       id: ruleId++,
       priority: 1,
-      action: redirectUrl ? 
-        { type: "redirect", redirect: { url: redirectUrl } } : 
-        { type: "block" },
-      condition: {
-        urlFilter: `||www.${cleanDomain}`,
-        resourceTypes: ["main_frame"]
-      }
-    });
-    
-    // Rule 3: Block all subdomains
-    rules.push({
-      id: ruleId++,
-      priority: 1,
-      action: redirectUrl ? 
-        { type: "redirect", redirect: { url: redirectUrl } } : 
-        { type: "block" },
-      condition: {
-        urlFilter: `||*.${cleanDomain}`,
-        resourceTypes: ["main_frame"]
-      }
-    });
-    
-    // Rule 4: Alternative pattern using requestDomains (more reliable)
-    rules.push({
-      id: ruleId++,
-      priority: 1,
-      action: redirectUrl ? 
-        { type: "redirect", redirect: { url: redirectUrl } } : 
+      action: safeRedirectUrl ? 
+        { type: "redirect", redirect: { url: safeRedirectUrl } } : 
         { type: "block" },
       condition: {
         requestDomains: [cleanDomain, `www.${cleanDomain}`],
@@ -1040,7 +1194,7 @@ function createBlockingRules(blockedSites, redirectUrl) {
       }
     });
     
-    console.log(`Created 4 rules for ${cleanDomain}`);
+    console.log(`Created 2 rules for ${cleanDomain}`);
   });
   
   console.log(`Total blocking rules created: ${rules.length}`);

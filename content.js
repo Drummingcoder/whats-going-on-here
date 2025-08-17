@@ -1,14 +1,68 @@
 // Content script: sends page title to background when requested and tracks visibility
 console.log("Content script loaded");
 
+// Check if extension context is valid at startup
+let extensionContextValid = true;
+try {
+  if (!chrome.runtime || !chrome.runtime.id) {
+    extensionContextValid = false;
+    console.log('Extension context not available at startup');
+  }
+} catch (error) {
+  extensionContextValid = false;
+  console.log('Extension context check failed:', error);
+}
+
 let lastActivityTime = Date.now();
 let activityCheckInterval = null;
 
+// Helper function to safely send messages to background script
+function safeSendMessage(message) {
+  if (!extensionContextValid) {
+    return;
+  }
+  
+  // Double-check runtime availability
+  try {
+    if (!chrome.runtime || !chrome.runtime.id) {
+      console.log('Chrome runtime not available, disabling content script');
+      extensionContextValid = false;
+      stopActivityMonitoring();
+      return;
+    }
+    
+    chrome.runtime.sendMessage(message);
+  } catch (error) {
+    if (error.message.includes('Extension context invalidated') || 
+        error.message.includes('receiving end does not exist')) {
+      console.log('Extension context invalidated, disabling content script');
+      extensionContextValid = false;
+      stopActivityMonitoring();
+      return;
+    }
+    console.error('Error sending message to background script:', error);
+  }
+}
+
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (!extensionContextValid) {
+    return;
+  }
+  
   console.log("Content script received message:", request);
   if (request.action === "getPageTitle") {
-    sendResponse({ title: document.title });
-    console.log("Sent page title:", document.title);
+    try {
+      sendResponse({ title: document.title });
+      console.log("Sent page title:", document.title);
+    } catch (error) {
+      if (error.message.includes('Extension context invalidated')) {
+        console.log('Extension context invalidated during message response');
+        extensionContextValid = false;
+        stopActivityMonitoring();
+        return;
+      }
+      console.error('Error sending response:', error);
+    }
   }
 });
 
@@ -21,7 +75,7 @@ document.addEventListener('visibilitychange', () => {
   lastActivityTime = Date.now();
   
   // Send visibility change to background script
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'pageVisibilityChanged',
     hidden: isHidden,
     url: window.location.href,
@@ -42,6 +96,10 @@ function trackUserActivity() {
 }
 
 function startActivityMonitoring() {
+  if (!extensionContextValid) {
+    return;
+  }
+  
   // Add activity listeners
   ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(eventType => {
     document.addEventListener(eventType, trackUserActivity, true);
@@ -59,7 +117,7 @@ function startActivityMonitoring() {
     // If no activity for 10 minutes and page is visible, might indicate device sleep
     if (timeSinceActivity > 10 * 60 * 1000 && !document.hidden) {
       console.log('Extended inactivity detected, possible device sleep');
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         action: 'extendedInactivity',
         url: window.location.href,
         inactivityDuration: timeSinceActivity,
@@ -70,6 +128,10 @@ function startActivityMonitoring() {
 }
 
 function stopActivityMonitoring() {
+  if (!extensionContextValid) {
+    return;
+  }
+  
   // Remove activity listeners
   ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(eventType => {
     document.removeEventListener(eventType, trackUserActivity, true);
@@ -82,15 +144,32 @@ function stopActivityMonitoring() {
   }
 }
 
-// Start monitoring if page is initially visible
-if (!document.hidden) {
+// Start monitoring if page is initially visible and extension context is valid
+if (!document.hidden && extensionContextValid) {
   startActivityMonitoring();
 }
+
+// Periodic check for extension context validity
+setInterval(() => {
+  if (extensionContextValid) {
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) {
+        console.log('Extension context lost, disabling content script');
+        extensionContextValid = false;
+        stopActivityMonitoring();
+      }
+    } catch (error) {
+      console.log('Extension context check failed, disabling content script');
+      extensionContextValid = false;
+      stopActivityMonitoring();
+    }
+  }
+}, 5000); // Check every 5 seconds
 
 // Track focus/blur events on the window
 window.addEventListener('focus', () => {
   lastActivityTime = Date.now();
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'windowFocus',
     url: window.location.href,
     timestamp: Date.now()
@@ -98,7 +177,7 @@ window.addEventListener('focus', () => {
 });
 
 window.addEventListener('blur', () => {
-  chrome.runtime.sendMessage({
+  safeSendMessage({
     action: 'windowBlur',
     url: window.location.href,
     timestamp: Date.now()

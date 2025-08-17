@@ -1,5 +1,6 @@
 # What's Going ON Here?
 A chrome extension to track web activity and block websites to help improve your productivity and keep track of your progress!
+Geared towards parents wanting to monitor their child.
 
 Features to add: 
 - An ability to track time and display it in a pie chart

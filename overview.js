@@ -3,8 +3,7 @@ class OverviewManager {
     this.elements = {
       // Settings elements
       sitesTextarea: document.getElementById("monitoredSites"),
-      saveBtn: document.getElementById("saveSettings"),
-      resetBtn: document.getElementById("resetSettings"),
+  // saveBtn and resetBtn removed
       resetSessionBtn: document.getElementById("resetSession"),
       status: document.getElementById("statusMessage"),
       
@@ -64,7 +63,7 @@ class OverviewManager {
 
   loadSettings() {
     chrome.storage.sync.get(['allowedSites'], (result) => {
-      if (result.allowedSites && Array.isArray(result.allowedSites)) {
+      if (result.allowedSites && Array.isArray(result.allowedSites) && this.elements.sitesTextarea) {
         this.elements.sitesTextarea.value = result.allowedSites.join('\n');
       }
     });
@@ -500,9 +499,7 @@ class OverviewManager {
       this.loadTimeData();
     });
     
-    // Settings save/reset
-    this.elements.saveBtn.addEventListener("click", () => this.saveSettings());
-    this.elements.resetBtn.addEventListener("click", () => this.resetSettings());
+  // Removed Save/Reset Settings button event listeners
     this.elements.resetSessionBtn.addEventListener("click", () => this.resetTodaysSession());
     
     // Blocking settings
@@ -526,9 +523,11 @@ class OverviewManager {
     this.elements.addScheduleRuleBtn.addEventListener("click", () => this.addScheduleRule());
     
     // Auto-resize textareas
-    this.elements.sitesTextarea.addEventListener("input", () => {
-      this.autoResizeTextarea(this.elements.sitesTextarea);
-    });
+    if (this.elements.sitesTextarea) {
+      this.elements.sitesTextarea.addEventListener("input", () => {
+        this.autoResizeTextarea(this.elements.sitesTextarea);
+      });
+    }
   }
 
   toggleSettingsPanel() {
@@ -985,45 +984,7 @@ class OverviewManager {
     el.style.color = type === 'error' ? '#dc2626' : '#667eea';
   }
 
-  saveSettings() {
-    try {
-      const errors = this.validateSettings();
-      if (errors.length > 0) {
-        this.showStatus(errors[0], 'error');
-        return;
-      }
 
-      const sites = this.getSitesFromTextarea();
-      
-      this.elements.saveBtn.disabled = true;
-      this.elements.saveBtn.textContent = 'Saving...';
-      
-      const syncSettings = {
-        allowedSites: sites
-      };
-
-      chrome.storage.sync.set(syncSettings, () => {
-        if (chrome.runtime.lastError) {
-          this.showStatus('Failed to save settings: ' + chrome.runtime.lastError.message, 'error');
-          this.resetSaveButton();
-          return;
-        }
-
-        this.showStatus('Settings saved successfully!');
-        this.resetSaveButton();
-      });
-
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      this.showStatus('An unexpected error occurred', 'error');
-      this.resetSaveButton();
-    }
-  }
-
-  resetSaveButton() {
-    this.elements.saveBtn.disabled = false;
-    this.elements.saveBtn.textContent = 'Save Settings';
-  }
 
   addBlockedSite() {
     const rawDomain = this.elements.newBlockedSite.value.trim();
@@ -1132,13 +1093,17 @@ class OverviewManager {
   }
 
   saveRedirectUrl() {
-    const redirectUrl = this.elements.redirectUrl.value.trim();
-    
+    let redirectUrl = this.elements.redirectUrl.value.trim();
+    // If user entered a URL without protocol, prepend https://
+    if (redirectUrl && !/^https?:\/\//i.test(redirectUrl)) {
+      redirectUrl = 'https://' + redirectUrl;
+    }
+
     if (redirectUrl && !this.isValidUrl(redirectUrl)) {
       this.showStatus("Redirect URL is not valid", 'error');
       return;
     }
-    
+
     chrome.storage.sync.set({ redirectUrl: redirectUrl }, () => {
       if (chrome.runtime.lastError) {
         this.showStatus('Failed to save redirect URL: ' + chrome.runtime.lastError.message, 'error');
@@ -1192,8 +1157,10 @@ class OverviewManager {
 
   updatePasswordProtectionUI(isProtected) {
     const blockingSection = document.getElementById('blockingSection');
+    if (!blockingSection) return;
     const sectionTitle = blockingSection.querySelector('.section-title');
-    
+    if (!sectionTitle) return;
+
     if (isProtected) {
       if (!sectionTitle.querySelector('.lock-icon')) {
         const lockIcon = document.createElement('span');
@@ -1422,7 +1389,7 @@ class OverviewManager {
                placeholder="Rule name">
         <button class="remove-schedule-btn" 
                 title="Delete this schedule rule">
-          🗑️
+          X
         </button>
       </div>
       
@@ -1596,22 +1563,7 @@ class OverviewManager {
     });
   }
 
-  resetSettings() {
-    if (!confirm('Are you sure you want to reset all settings? This will:\n\n• Clear all monitored sites\n• Clear all time tracking data')) {
-      return;
-    }
 
-    chrome.storage.sync.clear(() => {
-      chrome.storage.local.clear(() => {
-        this.elements.sitesTextarea.value = '';
-        
-        this.showStatus('All settings and data have been reset');
-        
-        // Refresh the charts and stats
-        this.loadTimeData();
-      });
-    });
-  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
