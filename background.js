@@ -13,6 +13,7 @@ let sessionHardLimit = 12 * 60 * 60 * 1000; // 12 hours
 let sessionTimeoutId = null;
 let sessionHardLimitId = null;
 let lastSessionActivity = Date.now();
+let lastSessionDate = (new Date()).toDateString();
 
 // Initialize window count on startup
 chrome.windows.getAll({}, (windows) => {
@@ -30,10 +31,25 @@ chrome.windows.getAll({}, (windows) => {
         offlineEnd: now,
         offlineDurationMs: timeSinceLastHeartbeat
       });
+
+      // Issue a device_shutdown event and stop tracking 5 minutes after the last heartbeat
+      const shutdownTimestamp = lastHeartbeat + deviceSleepThreshold;
+      chrome.storage.local.get(['persistedSession'], (result) => {
+        const persisted = result.persistedSession;
+        if (persisted && persisted.domain) {
+          // Log device_shutdown event at the shutdown timestamp
+          logEvent('device_shutdown', persisted.domain, persisted.title, shutdownTimestamp);
+          // Stop tracking as of that time
+          stopTracking();
+        }
+      });
     }
     // Continue with normal wakeup and heartbeat logic
     checkForDeviceWakeup();
     startHeartbeat();
+    
+    // Add missing end_of_day events for previous dates
+    addEndOfDayEvents();
   });
   
   // Check for pending blocking updates
@@ -66,18 +82,40 @@ function startHeartbeat() {
     const now = Date.now();
     const timeSinceLastActivity = now - lastActivityTimestamp;
     const timeSinceLastSessionActivity = now - lastSessionActivity;
-    
+    const currentDateString = (new Date()).toDateString();
+
+    // Log a heartbeat event every interval
+    logHeartbeat();
+
+    // Check for any persisted session from a previous day
+    chrome.storage.local.get(['persistedSession'], (result) => {
+      const persisted = result.persistedSession;
+      if (persisted && persisted.startDate && persisted.startDate !== currentDateString) {
+        // End the old session
+        console.log('Ending stale session from previous day:', persisted.domain);
+        endSessionDueToEndOfDay(persisted.domain, persisted.title);
+      }
+    });
+    // If the date has changed, end the session at midnight
+    if (activeDomain && currentDateString !== lastSessionDate) {
+      console.log('Ending session due to day rollover');
+      endSessionDueToEndOfDay(activeDomain, activeTitle);
+      lastSessionDate = currentDateString;
+      // Optionally, you could start a new session here if user is still active
+      return;
+    }
+
     // Check for session timeout (if we have an active session)
     if (activeDomain && timeSinceLastSessionActivity > sessionTimeoutThreshold) {
       console.log('Heartbeat detected session timeout');
       endSessionDueToInactivity();
     }
-    
+
     // If it's been more than our threshold since last activity, device might be asleep
     if (timeSinceLastActivity > deviceSleepThreshold && !isDeviceAsleep) {
       logEvent('device_sleep_inferred');
       isDeviceAsleep = true;
-      
+
       // Stop tracking current session
       if (activeDomain) {
         logEvent('tab_deactivated', activeDomain, activeTitle);
@@ -86,7 +124,14 @@ function startHeartbeat() {
         // Don't clear variables - we want to resume when device wakes
       }
     }
-    
+
+    // Check and update blocking rules based on schedule (every minute)
+    const currentMinute = Math.floor(now / 60000);
+    const lastMinute = Math.floor(lastActivityTimestamp / 60000);
+    if (currentMinute !== lastMinute) {
+      updateBlockingBasedOnSchedule();
+    }
+
     // Update last activity timestamp
     lastActivityTimestamp = now;
   }, 30000); // Check every 30 seconds
@@ -171,6 +216,9 @@ function endSessionDueToInactivity() {
   // Clear timeouts
   sessionTimeoutId = null;
   clearSessionHardLimit();
+
+  // Remove persisted session info
+  chrome.storage.local.remove('persistedSession');
 }
 
 function clearSessionTimeout() {
@@ -197,6 +245,9 @@ function endSessionDueToHardLimit() {
   // Clear timeouts
   sessionHardLimitId = null;
   clearSessionTimeout();
+
+  // Remove persisted session info
+  chrome.storage.local.remove('persistedSession');
 }
 
 function clearSessionHardLimit() {
@@ -383,16 +434,84 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 // Website blocking functionality
-function initializeBlockingRules() {
-  chrome.storage.sync.get(['blockedSitesList', 'redirectUrl'], (result) => {
-    if (result.blockedSitesList && result.blockedSitesList.length > 0) {
-      const enabledSites = result.blockedSitesList
+function getSitesToBlockNow() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(['blockedSitesList', 'blockingScheduleRules'], (result) => {
+      const blockedSites = result.blockedSitesList || [];
+      const scheduleRules = result.blockingScheduleRules || [];
+      
+      const enabledSites = blockedSites
         .filter(site => site.enabled !== false)
         .map(site => site.domain);
       
-      if (enabledSites.length > 0) {
+      // If no schedule rules exist, block all enabled sites 24/7
+      if (scheduleRules.length === 0) {
+        resolve(enabledSites);
+        return;
+      }
+      
+      const now = new Date();
+      const currentDay = now.getDay(); // 0=Sunday, 1=Monday, etc.
+      const currentTime = now.getHours() * 60 + now.getMinutes(); // Minutes since midnight
+      
+      // Collect sites that should be blocked based on active schedule rules
+      const sitesToBlock = new Set();
+      
+      scheduleRules.forEach(rule => {
+        // Check if current day is in rule's days
+        if (!rule.days.includes(currentDay)) {
+          return;
+        }
+        
+        // Parse time range
+        const [startHour, startMin] = rule.startTime.split(':').map(n => parseInt(n));
+        const [endHour, endMin] = rule.endTime.split(':').map(n => parseInt(n));
+        const startTime = startHour * 60 + startMin;
+        const endTime = endHour * 60 + endMin;
+        
+        // Check if current time is in rule's time range
+        const isInTimeRange = (startTime <= endTime) 
+          ? (currentTime >= startTime && currentTime <= endTime)
+          : (currentTime >= startTime || currentTime <= endTime); // Handle overnight ranges
+        
+        if (isInTimeRange) {
+          // Add all websites from this rule to the blocking list
+          rule.websites.forEach(website => {
+            if (enabledSites.includes(website)) {
+              sitesToBlock.add(website);
+            }
+          });
+        }
+      });
+      
+      resolve(Array.from(sitesToBlock));
+    });
+  });
+}
+
+function updateBlockingBasedOnSchedule() {
+  chrome.storage.sync.get(['redirectUrl'], (result) => {
+    getSitesToBlockNow().then(sitesToBlock => {
+      updateBlockingRules({
+        blockedSites: sitesToBlock,
+        redirectUrl: result.redirectUrl || ''
+      }, (success, error) => {
+        if (success) {
+          console.log('Blocking rules updated based on schedule');
+        } else {
+          console.error('Failed to update blocking rules based on schedule:', error);
+        }
+      });
+    });
+  });
+}
+
+function initializeBlockingRules() {
+  chrome.storage.sync.get(['redirectUrl'], (result) => {
+    getSitesToBlockNow().then(sitesToBlock => {
+      if (sitesToBlock.length > 0) {
         updateBlockingRules({
-          blockedSites: enabledSites,
+          blockedSites: sitesToBlock,
           redirectUrl: result.redirectUrl || ''
         }, (success, error) => {
           if (success) {
@@ -401,8 +520,16 @@ function initializeBlockingRules() {
             console.error('Failed to load initial blocking rules:', error);
           }
         });
+      } else {
+        // Clear all blocking rules if no sites should be blocked now
+        updateBlockingRules({
+          blockedSites: [],
+          redirectUrl: result.redirectUrl || ''
+        }, () => {
+          console.log('No sites to block at this time');
+        });
       }
-    }
+    });
   });
 }
 
@@ -569,22 +696,127 @@ function createBlockingRules(blockedSites, redirectUrl) {
 
 // Event-based logging function
 function logEvent(eventType, domain = null, title = null, timestamp = Date.now()) {
-  const today = new Date(timestamp).toDateString();
-  const event = {
-    type: eventType,
-    domain: domain,
-    title: title,
-    timestamp: timestamp
-  };
+  // First, check for heartbeat gaps before logging the current event
+  chrome.storage.local.get(['lastHeartbeat', 'persistedSession'], (result) => {
+    const lastHeartbeat = result.lastHeartbeat;
+    const now = timestamp;
+    
+    // Only check for gaps if we have a previous heartbeat and it's not a shutdown/offline event
+    if (lastHeartbeat && !['device_shutdown', 'device_offline_inferred', 'browser_closed'].includes(eventType)) {
+      const timeSinceLastHeartbeat = now - lastHeartbeat;
+      
+      // If more than 5 minutes have passed since last heartbeat, issue a shutdown event
+      if (timeSinceLastHeartbeat > deviceSleepThreshold) {
+        const persisted = result.persistedSession;
+        
+        // Only issue shutdown if we had an active session
+        if (persisted && persisted.domain) {
+          const shutdownTimestamp = lastHeartbeat + deviceSleepThreshold;
+          console.log(`Heartbeat gap detected: ${timeSinceLastHeartbeat}ms since last heartbeat. Issuing device_shutdown at ${shutdownTimestamp}`);
+          
+          // Log the device_shutdown event at 5 minutes after last heartbeat
+          const shutdownEvent = {
+            type: 'device_shutdown',
+            domain: persisted.domain,
+            title: persisted.title,
+            timestamp: shutdownTimestamp
+          };
+          
+          const shutdownDate = new Date(shutdownTimestamp).toDateString();
+          chrome.storage.local.get(['eventLog'], (logResult) => {
+            const eventLog = logResult.eventLog || {};
+            if (!eventLog[shutdownDate]) {
+              eventLog[shutdownDate] = [];
+            }
+            eventLog[shutdownDate].push(shutdownEvent);
+            chrome.storage.local.set({ eventLog: eventLog });
+            console.log('Device shutdown event logged due to heartbeat gap:', shutdownEvent);
+            
+            // Clear the persisted session since we've ended it
+            chrome.storage.local.remove('persistedSession');
+          });
+        }
+      }
+    }
+    
+    // Now proceed with logging the original event
+    const today = new Date(timestamp).toDateString();
+    const event = {
+      type: eventType,
+      domain: domain,
+      title: title,
+      timestamp: timestamp
+    };
 
+    chrome.storage.local.get(['eventLog'], (result) => {
+      const eventLog = result.eventLog || {};
+      if (!eventLog[today]) {
+        eventLog[today] = [];
+      }
+      eventLog[today].push(event);
+      chrome.storage.local.set({ eventLog: eventLog });
+      console.log('Event logged:', event);
+    });
+    
+  // Do not update the heartbeat timestamp here; heartbeats are logged by startHeartbeat()
+  });
+}
+
+// Add end_of_day events for all dates that don't have them
+function addEndOfDayEvents() {
   chrome.storage.local.get(['eventLog'], (result) => {
     const eventLog = result.eventLog || {};
-    if (!eventLog[today]) {
-      eventLog[today] = [];
+    const today = new Date().toDateString();
+    let modified = false;
+
+    // Go through each date with activity
+    Object.keys(eventLog).forEach(dateString => {
+      // Skip today - we don't want to add end_of_day for current day
+      if (dateString === today) {
+        return;
+      }
+
+      const dayEvents = eventLog[dateString];
+      if (!dayEvents || dayEvents.length === 0) {
+        return;
+      }
+
+      // Check if this date already has an end_of_day event
+      const hasEndOfDay = dayEvents.some(event => 
+        event.type === 'end_of_day' || 
+        event.type === 'browser_closed' || 
+        event.type === 'session_day_rollover'
+      );
+
+      if (!hasEndOfDay) {
+        // Find the last event of the day to get the domain/title
+        const lastEvent = dayEvents[dayEvents.length - 1];
+        
+        // Create end of day timestamp (11:59:59 PM of that date)
+        const dateObj = new Date(dateString);
+        dateObj.setHours(23, 59, 59, 999);
+        const endOfDayTimestamp = dateObj.getTime();
+
+        // Add end_of_day event
+        const endOfDayEvent = {
+          type: 'end_of_day',
+          domain: lastEvent.domain || null,
+          title: lastEvent.title || null,
+          timestamp: endOfDayTimestamp
+        };
+
+        dayEvents.push(endOfDayEvent);
+        modified = true;
+        console.log(`Added end_of_day event for ${dateString}`);
+      }
+    });
+
+    // Save the updated event log if any changes were made
+    if (modified) {
+      chrome.storage.local.set({ eventLog: eventLog }, () => {
+        console.log('End of day events added successfully');
+      });
     }
-    eventLog[today].push(event);
-    chrome.storage.local.set({ eventLog: eventLog });
-    console.log('Event logged:', event);
   });
 }
 
@@ -668,6 +900,46 @@ function startTracking(tabId, url) {
   activeStartTime = Date.now();
   activeTitle = title;
   lastSessionActivity = Date.now();
+  lastSessionDate = (new Date()).toDateString();
+
+  // Persist session info in storage
+  chrome.storage.local.set({
+    persistedSession: {
+      domain: activeDomain,
+      title: activeTitle,
+      startTime: activeStartTime,
+      startDate: lastSessionDate
+    }
+  });
+function endSessionDueToDayRollover() {
+  if (activeDomain) {
+    console.log(`Ending session for ${activeDomain} due to day rollover`);
+    logEvent('session_day_rollover', activeDomain, activeTitle);
+    activeTabId = null;
+    activeDomain = null;
+    activeStartTime = null;
+    activeTitle = null;
+  }
+  clearSessionTimeout();
+  clearSessionHardLimit();
+
+  // Remove persisted session info
+  chrome.storage.local.remove('persistedSession');
+}
+
+function endSessionDueToEndOfDay(domain, title) {
+  if (activeDomain || domain) {
+    const sessionDomain = activeDomain || domain;
+    const sessionTitle = activeTitle || title;
+    console.log(`Ending session for ${sessionDomain} due to end of day`);
+    
+    // Stop current tracking like browser_closed does
+    stopTracking();
+    
+    // Log the end_of_day event if not already logged
+    logEvent('end_of_day', sessionDomain, sessionTitle);
+  }
+}
 
   // Only get page title for non-restricted URLs
   if (!title) {
@@ -701,6 +973,9 @@ function stopTracking() {
   activeDomain = null;
   activeStartTime = null;
   activeTitle = null;
+
+  // Remove persisted session info
+  chrome.storage.local.remove('persistedSession');
 }
 
 // Tab event listeners

@@ -28,10 +28,16 @@ class OverviewManager {
       // Blocking elements
       newBlockedSite: document.getElementById("newBlockedSite"),
       addBlockedSiteBtn: document.getElementById("addBlockedSite"),
-      debugRulesBtn: document.getElementById("debugRules"),
       blockedSitesList: document.getElementById("blockedSitesList"),
       emptyState: document.getElementById("emptyState"),
       redirectUrl: document.getElementById("redirectUrl"),
+      blockingPassword: document.getElementById("blockingPassword"),
+      savePasswordBtn: document.getElementById("savePassword"),
+      
+      // Schedule elements
+      addScheduleRuleBtn: document.getElementById("addScheduleRule"),
+      scheduleRulesList: document.getElementById("scheduleRulesList"),
+      scheduleEmptyState: document.getElementById("scheduleEmptyState"),
       
       // Chart elements
       pieChart: document.getElementById("pieChart"),
@@ -43,12 +49,14 @@ class OverviewManager {
     this.pieChartInstance = null;
     this.selectedDate = new Date();
     this.blockedSites = []; // Initialize blocked sites array
+    this.scheduleRules = []; // Initialize schedule rules array
     this.init();
   }
 
   init() {
     this.loadSettings();
     this.loadBlockingSettings();
+    this.loadScheduleSettings();
     this.initializeDateSelector();
     this.loadTimeData();
     this.attachEventListeners();
@@ -63,13 +71,21 @@ class OverviewManager {
   }
 
   loadBlockingSettings() {
-    chrome.storage.sync.get(['blockedSitesList', 'redirectUrl'], (result) => {
+    chrome.storage.sync.get(['blockedSitesList', 'redirectUrl', 'blockingPassword'], (result) => {
       // Load blocked sites list
       this.blockedSites = result.blockedSitesList || [];
       this.renderBlockedSitesList();
       
       // Load redirect URL
       this.elements.redirectUrl.value = result.redirectUrl || '';
+      
+      // Load password (show placeholder if set)
+      if (result.blockingPassword) {
+        this.elements.blockingPassword.placeholder = 'Password is set - enter to change';
+        this.updatePasswordProtectionUI(true);
+      } else {
+        this.updatePasswordProtectionUI(false);
+      }
     });
     
     // Hide blocking status on load
@@ -121,8 +137,8 @@ class OverviewManager {
     const toggleBtn = item.querySelector('.toggle-block-btn');
     const removeBtn = item.querySelector('.remove-site-btn');
     
-    toggleBtn.addEventListener('click', () => this.toggleSiteBlocking(index));
-    removeBtn.addEventListener('click', () => this.removeSite(index));
+    toggleBtn.addEventListener('click', async () => await this.toggleSiteBlocking(index));
+    removeBtn.addEventListener('click', async () => await this.removeSite(index));
     
     return item;
   }
@@ -168,7 +184,11 @@ class OverviewManager {
   }
 
   formatDateForInput(date) {
-    return date.toISOString().split('T')[0];
+    // Format as yyyy-mm-dd in local time
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   navigateDate(direction) {
@@ -466,13 +486,14 @@ class OverviewManager {
     this.elements.datePicker.addEventListener("change", (e) => {
       const selectedDate = new Date(e.target.value + 'T12:00:00'); // Add time to avoid timezone issues
       const today = new Date();
-      
-      // Don't allow future dates
-      if (selectedDate > today) {
+      // Zero out time for both dates for comparison
+      const selectedDateOnly = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
+      const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      // Don't allow future dates (date only)
+      if (selectedDateOnly > todayOnly) {
         this.elements.datePicker.value = this.formatDateForInput(this.selectedDate);
         return;
       }
-      
       this.selectedDate = selectedDate;
       this.updateDateDisplay();
       this.updateNavigationButtons();
@@ -486,13 +507,23 @@ class OverviewManager {
     
     // Blocking settings
     this.elements.addBlockedSiteBtn.addEventListener("click", () => this.addBlockedSite());
-    this.elements.debugRulesBtn.addEventListener("click", () => this.debugBlockingRules());
     this.elements.newBlockedSite.addEventListener("keypress", (e) => {
       if (e.key === 'Enter') {
         this.addBlockedSite();
       }
     });
     this.elements.redirectUrl.addEventListener("change", () => this.saveRedirectUrl());
+    
+    // Password settings
+    this.elements.savePasswordBtn.addEventListener("click", async () => await this.saveBlockingPassword());
+    this.elements.blockingPassword.addEventListener("keypress", async (e) => {
+      if (e.key === 'Enter') {
+        await this.saveBlockingPassword();
+      }
+    });
+    
+    // Schedule settings
+    this.elements.addScheduleRuleBtn.addEventListener("click", () => this.addScheduleRule());
     
     // Auto-resize textareas
     this.elements.sitesTextarea.addEventListener("input", () => {
@@ -1067,16 +1098,32 @@ class OverviewManager {
     });
   }
 
-  toggleSiteBlocking(index) {
+  async toggleSiteBlocking(index) {
     if (index >= 0 && index < this.blockedSites.length) {
+      const site = this.blockedSites[index];
+      // If we're trying to disable blocking (unblock), check password
+      if (site.enabled) {
+        const authorized = await this.checkPassword();
+        if (!authorized) {
+          return; // Password check failed, don't allow unblocking
+        }
+      }
+      
       this.blockedSites[index].enabled = !this.blockedSites[index].enabled;
       this.saveBlockedSitesList();
     }
   }
 
-  removeSite(index) {
+  async removeSite(index) {
     if (index >= 0 && index < this.blockedSites.length) {
       const domain = this.blockedSites[index].domain;
+      
+      // Check password before allowing removal
+      const authorized = await this.checkPassword();
+      if (!authorized) {
+        return; // Password check failed, don't allow removal
+      }
+      
       if (confirm(`Remove "${domain}" from blocked sites?`)) {
         this.blockedSites.splice(index, 1);
         this.saveBlockedSitesList();
@@ -1098,6 +1145,101 @@ class OverviewManager {
         return;
       }
       this.updateBlockingRules();
+    });
+  }
+
+  async saveBlockingPassword() {
+    const newPassword = this.elements.blockingPassword.value.trim();
+    
+    // Check if password protection is currently enabled
+    const currentPasswordSet = await this.isPasswordSet();
+    
+    if (currentPasswordSet) {
+      // Verify current password before allowing changes
+      const authorized = await this.checkPassword();
+      if (!authorized) {
+        this.elements.blockingPassword.value = ''; // Clear the input
+        return; // Password verification failed
+      }
+    }
+    
+    if (newPassword === '') {
+      // Remove password protection
+      chrome.storage.sync.remove('blockingPassword', () => {
+        if (chrome.runtime.lastError) {
+          this.showStatus('Failed to remove password: ' + chrome.runtime.lastError.message, 'error');
+          return;
+        }
+        this.elements.blockingPassword.placeholder = 'Enter password to protect blocking settings';
+        this.elements.blockingPassword.value = '';
+        this.updatePasswordProtectionUI(false);
+        this.showStatus('Password protection disabled');
+      });
+    } else {
+      // Set new password protection
+      chrome.storage.sync.set({ blockingPassword: newPassword }, () => {
+        if (chrome.runtime.lastError) {
+          this.showStatus('Failed to save password: ' + chrome.runtime.lastError.message, 'error');
+          return;
+        }
+        this.elements.blockingPassword.placeholder = 'Password is set - enter to change';
+        this.elements.blockingPassword.value = '';
+        this.updatePasswordProtectionUI(true);
+        this.showStatus(currentPasswordSet ? 'Password updated successfully' : 'Password protection enabled');
+      });
+    }
+  }
+
+  updatePasswordProtectionUI(isProtected) {
+    const blockingSection = document.getElementById('blockingSection');
+    const sectionTitle = blockingSection.querySelector('.section-title');
+    
+    if (isProtected) {
+      if (!sectionTitle.querySelector('.lock-icon')) {
+        const lockIcon = document.createElement('span');
+        lockIcon.className = 'lock-icon';
+        lockIcon.textContent = '🔒';
+        lockIcon.style.marginLeft = '8px';
+        lockIcon.title = 'Password protected';
+        sectionTitle.appendChild(lockIcon);
+      }
+    } else {
+      const lockIcon = sectionTitle.querySelector('.lock-icon');
+      if (lockIcon) {
+        lockIcon.remove();
+      }
+    }
+  }
+
+  async isPasswordSet() {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get(['blockingPassword'], (result) => {
+        resolve(!!result.blockingPassword);
+      });
+    });
+  }
+
+  async checkPassword() {
+    return new Promise((resolve) => {
+      chrome.storage.sync.get(['blockingPassword'], (result) => {
+        if (!result.blockingPassword) {
+          resolve(true); // No password set, allow action
+          return;
+        }
+        
+        const enteredPassword = prompt('Enter password to modify blocking settings:');
+        if (enteredPassword === null) {
+          resolve(false); // User cancelled
+          return;
+        }
+        
+        if (enteredPassword === result.blockingPassword) {
+          resolve(true); // Correct password
+        } else {
+          alert('Incorrect password!');
+          resolve(false); // Wrong password
+        }
+      });
     });
   }
 
@@ -1179,17 +1321,254 @@ class OverviewManager {
     });
   }
 
-  debugBlockingRules() {
-    chrome.runtime.sendMessage({ action: 'debugBlockingRules' }, (response) => {
-      if (response && response.rules) {
-        console.log('Active blocking rules:', response.rules);
-        const ruleCount = response.rules.length;
-        const enabledSites = this.blockedSites.filter(site => site.enabled !== false).length;
-        alert(`Debug Info:\n\nEnabled sites: ${enabledSites}\nActive rules: ${ruleCount}\n\nCheck console for detailed rule information.`);
-      } else {
-        alert('Failed to get blocking rules debug info');
-      }
+
+  // Schedule management methods
+  loadScheduleSettings() {
+    chrome.storage.sync.get(['blockingScheduleRules'], (result) => {
+      this.scheduleRules = result.blockingScheduleRules || [];
+      this.renderScheduleRulesList();
     });
+  }
+
+  addScheduleRule() {
+    const newRule = {
+      id: Date.now(),
+      name: `Schedule Rule ${this.scheduleRules.length + 1}`,
+      days: [], // 0=Sunday, 1=Monday, etc.
+      startTime: '09:00',
+      endTime: '17:00',
+      websites: []
+    };
+
+    this.scheduleRules.push(newRule);
+    this.renderScheduleRulesList();
+    this.saveScheduleRules();
+  }
+
+  async removeScheduleRule(ruleId) {
+    console.log('Removing schedule rule:', ruleId);
+    
+    // Check password before allowing removal
+    const authorized = await this.checkPassword();
+    if (!authorized) {
+      return; // Password check failed, don't allow removal
+    }
+    
+    console.log('Before removal:', this.scheduleRules.length, 'rules');
+    this.scheduleRules = this.scheduleRules.filter(rule => rule.id !== ruleId);
+    console.log('After removal:', this.scheduleRules.length, 'rules');
+    this.renderScheduleRulesList();
+    this.saveScheduleRules();
+  }
+
+  updateScheduleRule(ruleId, updates) {
+    const rule = this.scheduleRules.find(r => r.id === ruleId);
+    if (rule) {
+      Object.assign(rule, updates);
+      // Re-render to update time displays if time changed
+      if (updates.startTime || updates.endTime) {
+        this.renderScheduleRulesList();
+      }
+      this.saveScheduleRules();
+    }
+  }
+
+  saveScheduleRules() {
+    chrome.storage.sync.set({ blockingScheduleRules: this.scheduleRules }, () => {
+      if (chrome.runtime.lastError) {
+        this.showStatus('Failed to save schedule rules: ' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      this.updateBlockingRules(); // Update blocking with new schedule
+    });
+  }
+
+  renderScheduleRulesList() {
+    const container = this.elements.scheduleRulesList;
+    const emptyState = this.elements.scheduleEmptyState;
+
+    if (this.scheduleRules.length === 0) {
+      emptyState.style.display = 'block';
+      container.innerHTML = '';
+      container.appendChild(emptyState);
+      return;
+    }
+
+    emptyState.style.display = 'none';
+    container.innerHTML = '';
+
+    this.scheduleRules.forEach(rule => {
+      const ruleElement = this.createScheduleRuleElement(rule);
+      container.appendChild(ruleElement);
+    });
+  }
+
+  createScheduleRuleElement(rule) {
+    const ruleDiv = document.createElement('div');
+    ruleDiv.className = 'schedule-rule-item';
+    ruleDiv.dataset.ruleId = rule.id;
+    
+    // Convert 24-hour time to 12-hour format for display
+    const formatTimeForDisplay = (time24) => {
+      const [hours, minutes] = time24.split(':');
+      const hour12 = ((parseInt(hours) + 11) % 12) + 1;
+      const ampm = parseInt(hours) >= 12 ? 'PM' : 'AM';
+      return `${hour12}:${minutes} ${ampm}`;
+    };
+    
+    ruleDiv.innerHTML = `
+      <div class="schedule-rule-header">
+        <input type="text" class="schedule-rule-title" value="${rule.name}" 
+               placeholder="Rule name">
+        <button class="remove-schedule-btn" 
+                title="Delete this schedule rule">
+          🗑️
+        </button>
+      </div>
+      
+      <div class="schedule-rule-controls">
+        <div class="time-range-section">
+          <label style="font-size: 12px; font-weight: 600; color: #374151; display: block; margin-bottom: 6px;">Time Range</label>
+          <div class="time-inputs">
+            <div class="time-input-group">
+              <input type="time" class="time-input start-time" value="${rule.startTime}" 
+                     title="${formatTimeForDisplay(rule.startTime)}">
+              <span class="time-display">${formatTimeForDisplay(rule.startTime)}</span>
+            </div>
+            <span style="color: #6b7280; padding: 0 8px;">to</span>
+            <div class="time-input-group">
+              <input type="time" class="time-input end-time" value="${rule.endTime}" 
+                     title="${formatTimeForDisplay(rule.endTime)}">
+              <span class="time-display">${formatTimeForDisplay(rule.endTime)}</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="days-section">
+          <label style="font-size: 12px; font-weight: 600; color: #374151; display: block; margin-bottom: 6px;">Days of Week</label>
+          <div class="days-selector">
+            ${this.createDayButtons(rule)}
+          </div>
+        </div>
+      </div>
+      
+      <div class="websites-selector">
+        <label style="font-size: 12px; font-weight: 600; color: #374151; display: block; margin-bottom: 6px;">Apply to Websites</label>
+        <div class="websites-checkboxes">
+          ${this.createWebsiteCheckboxes(rule)}
+        </div>
+      </div>
+    `;
+
+    // Add event listeners after creating the element
+    this.attachScheduleRuleEventListeners(ruleDiv, rule);
+
+    return ruleDiv;
+  }
+
+  createDayButtons(rule) {
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return days.map((day, index) => {
+      const isActive = rule.days.includes(index);
+      return `
+        <button class="day-btn ${isActive ? 'active' : ''}" data-day-index="${index}">
+          ${day}
+        </button>
+      `;
+    }).join('');
+  }
+
+  createWebsiteCheckboxes(rule) {
+    if (this.blockedSites.length === 0) {
+      return '<span style="color: #6b7280; font-style: italic;">No blocked websites available</span>';
+    }
+
+    return this.blockedSites.map(site => {
+      const isSelected = rule.websites.includes(site.domain);
+      return `
+        <label class="website-checkbox ${isSelected ? 'selected' : ''}" data-domain="${site.domain}">
+          <input type="checkbox" ${isSelected ? 'checked' : ''}>
+          ${site.domain}
+        </label>
+      `;
+    }).join('');
+  }
+
+  attachScheduleRuleEventListeners(ruleDiv, rule) {
+    const ruleId = rule.id;
+    
+    // Title input event listener
+    const titleInput = ruleDiv.querySelector('.schedule-rule-title');
+    titleInput.addEventListener('change', (e) => {
+      this.updateScheduleRule(ruleId, { name: e.target.value });
+    });
+    
+    // Delete button event listener
+    const deleteBtn = ruleDiv.querySelector('.remove-schedule-btn');
+    deleteBtn.addEventListener('click', async () => {
+      await this.removeScheduleRule(ruleId);
+    });
+    
+    // Time input event listeners
+    const startTimeInput = ruleDiv.querySelector('.start-time');
+    startTimeInput.addEventListener('change', (e) => {
+      this.updateScheduleRule(ruleId, { startTime: e.target.value });
+    });
+    
+    const endTimeInput = ruleDiv.querySelector('.end-time');
+    endTimeInput.addEventListener('change', (e) => {
+      this.updateScheduleRule(ruleId, { endTime: e.target.value });
+    });
+    
+    // Day button event listeners
+    const dayButtons = ruleDiv.querySelectorAll('.day-btn');
+    dayButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const dayIndex = parseInt(btn.dataset.dayIndex);
+        this.toggleRuleDay(ruleId, dayIndex);
+      });
+    });
+    
+    // Website checkbox event listeners
+    const websiteCheckboxes = ruleDiv.querySelectorAll('.website-checkbox');
+    websiteCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener('click', (e) => {
+        e.preventDefault(); // Prevent default checkbox behavior
+        const domain = checkbox.dataset.domain;
+        this.toggleRuleWebsite(ruleId, domain);
+      });
+    });
+  }
+
+  toggleRuleDay(ruleId, dayIndex) {
+    console.log('Toggling day:', ruleId, dayIndex);
+    const rule = this.scheduleRules.find(r => r.id === ruleId);
+    if (rule) {
+      const dayIndex_num = parseInt(dayIndex);
+      if (rule.days.includes(dayIndex_num)) {
+        rule.days = rule.days.filter(d => d !== dayIndex_num);
+      } else {
+        rule.days.push(dayIndex_num);
+      }
+      console.log('Updated rule days:', rule.days);
+      this.renderScheduleRulesList();
+      this.saveScheduleRules();
+    }
+  }
+
+  toggleRuleWebsite(ruleId, domain) {
+    console.log('Toggling website:', ruleId, domain);
+    const rule = this.scheduleRules.find(r => r.id === ruleId);
+    if (rule) {
+      if (rule.websites.includes(domain)) {
+        rule.websites = rule.websites.filter(w => w !== domain);
+      } else {
+        rule.websites.push(domain);
+      }
+      console.log('Updated rule websites:', rule.websites);
+      this.renderScheduleRulesList();
+      this.saveScheduleRules();
+    }
   }
 
   isValidUrl(string) {
@@ -1202,36 +1581,18 @@ class OverviewManager {
   }
 
   resetTodaysSession() {
-    if (!confirm('Reset today\'s browsing session data?\n\nThis will clear:\n• All event tracking for today\n• Today\'s activity log\n• Charts and stats will reset to 0\n\nThis action cannot be undone.')) {
+    if (!confirm('Reset ALL browsing session data?\n\nThis will clear:\n• All event tracking for all days\n• All activity logs\n• Charts and stats will reset to 0\n\nThis action cannot be undone.')) {
       return;
     }
 
-    const today = new Date().toDateString();
-    
-    // Get current data and remove only today's entries
-    chrome.storage.local.get(['timeTracking', 'eventLog'], (result) => {
-      const timeTracking = result.timeTracking || {};
-      const eventLog = result.eventLog || {};
-      
-      // Remove today's data
-      delete timeTracking[today];
-      delete eventLog[today];
-      
-      // Save the updated data
-      chrome.storage.local.set({ 
-        timeTracking: timeTracking,
-        eventLog: eventLog 
-      }, () => {
-        if (chrome.runtime.lastError) {
-          this.showStatus('Failed to reset session data', 'error');
-          return;
-        }
-        
-        this.showStatus('Today\'s session data has been reset');
-        
-        // Refresh the charts and stats
-        this.loadTimeData();
-      });
+    // Clear all time tracking and event log data
+    chrome.storage.local.set({ timeTracking: {}, eventLog: {} }, () => {
+      if (chrome.runtime.lastError) {
+        this.showStatus('Failed to reset session data', 'error');
+        return;
+      }
+      this.showStatus('All session data has been reset');
+      this.loadTimeData();
     });
   }
 
@@ -1254,5 +1615,5 @@ class OverviewManager {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  new OverviewManager();
+  window.overviewManager = new OverviewManager();
 });
