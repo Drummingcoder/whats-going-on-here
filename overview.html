@@ -650,7 +650,7 @@
 
     .form-label {
       display: block;
-      margin-bottom: 8px;
+      margin-bottom: 2px;
       font-weight: 600;
       color: #1e293b;
       font-size: 14px;
@@ -658,7 +658,7 @@
 
     .form-input, .form-textarea {
       width: 100%;
-      padding: 12px 16px;
+      padding: 8px 16px;
       border: 1px solid #e2e8f0;
       border-radius: 8px;
       background: #ffffff;
@@ -689,6 +689,11 @@
       display: flex;
       gap: 12px;
       margin-top: 24px;
+    }
+
+    /* Remove margin-top when button-group is in a flex row with input */
+    .form-group > div[style*="display: flex"] > .button-group {
+      margin-top: 0;
     }
 
     .btn {
@@ -877,7 +882,7 @@
             </div>
             <!-- Blocking Schedule -->
             <div class="form-group">
-              <label class="form-label"><span>📅</span> Blocking Schedule (Optional)</label>
+              <label class="form-label"><span>📅</span> Blocking Schedule (not working)</label>
               <div class="form-help" style="margin-bottom: 16px;">Set specific days and times when websites should be blocked. Leave empty to block 24/7.</div>
               <div id="scheduleContainer" class="schedule-container">
                 <div class="schedule-controls">
