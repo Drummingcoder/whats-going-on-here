@@ -1,7 +1,3 @@
-// Content script: sends page title to background when requested and tracks visibility
-console.log("Content script loaded");
-
-// Check if extension context is valid at startup
 let extensionContextValid = true;
 try {
   if (!chrome.runtime || !chrome.runtime.id) {

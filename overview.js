@@ -3,7 +3,6 @@ class OverviewManager {
     this.elements = {
       // Settings elements
       sitesTextarea: document.getElementById("monitoredSites"),
-  // saveBtn and resetBtn removed
       resetSessionBtn: document.getElementById("resetSession"),
       status: document.getElementById("statusMessage"),
       
@@ -47,8 +46,8 @@ class OverviewManager {
 
     this.pieChartInstance = null;
     this.selectedDate = new Date();
-    this.blockedSites = []; // Initialize blocked sites array
-    this.scheduleRules = []; // Initialize schedule rules array
+    this.blockedSites = [];
+    this.scheduleRules = [];
     this.init();
   }
 
@@ -115,7 +114,7 @@ class OverviewManager {
     const item = document.createElement('div');
     item.className = 'blocked-site-item';
     
-    const isActive = siteData.enabled !== false; // Default to true if not specified
+    const isActive = siteData.enabled !== false;
     
     item.innerHTML = `
       <div class="blocked-site-info">
@@ -614,8 +613,9 @@ class OverviewManager {
     });
 
     const colors = [
-      '#667eea', '#764ba2', '#f093fb', '#f5576c',
-      '#4facfe', '#00f2fe', '#43e97b', '#38f9d7'
+      '#e02828ff', '#d16f14ff', '#e7e409ff', '#72c216ff',
+      '#00a308ff', '#00f2fe', '#0968f5ff', '#610f86ff',
+      '#ff00d4ff'
     ];
 
     // Hide placeholder and show chart
@@ -726,21 +726,14 @@ class OverviewManager {
       return;
     }
 
-    // Hide placeholder and show schedule
     this.elements.schedulePlaceholder.style.display = 'none';
     this.elements.blockSchedule.style.display = 'block';
 
-    // Create timeline visualization
+    // Sort, consolidate, and group sessions
     const container = this.elements.blockSchedule;
     container.innerHTML = '';
-    
-    // Sort sessions by start time
     const sortedSessions = processedSessions.sort((a, b) => a.startTime - b.startTime);
-    
-    // Consolidate consecutive sessions from the same domain
     const consolidatedSessions = this.consolidateSessions(sortedSessions);
-    
-    // Group consolidated sessions by hour
     const hourlyGroups = {};
     consolidatedSessions.forEach(session => {
       const hour = new Date(session.startTime).getHours();
@@ -750,20 +743,32 @@ class OverviewManager {
       hourlyGroups[hour].push(session);
     });
 
-    // Create timeline blocks
+    // Create timeline blocks horizontally
     const timelineContainer = document.createElement('div');
     timelineContainer.style.cssText = `
-      height: 300px;
+      height: 100%;
+      overflow-x: auto;
       overflow-y: auto;
       padding: 16px;
+      display: flex;
+      flex-direction: row;
+      gap: 24px;
     `;
 
     Object.keys(hourlyGroups).sort((a, b) => parseInt(a) - parseInt(b)).forEach(hour => {
       const hourBlock = document.createElement('div');
       hourBlock.style.cssText = `
-        margin-bottom: 16px;
-        border-left: 3px solid #667eea;
-        padding-left: 12px;
+        min-width: 160px;
+        max-width: 200px;
+        flex: 0 0 auto;
+        padding-left: 30px;
+        margin-bottom: 0;
+        background: #f9fafb;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(30,41,59,0.04);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
       `;
 
       const hourLabel = document.createElement('div');
@@ -773,6 +778,7 @@ class OverviewManager {
         color: #374151;
         margin-bottom: 8px;
         font-size: 14px;
+        text-align: left;
       `;
       hourBlock.appendChild(hourLabel);
 

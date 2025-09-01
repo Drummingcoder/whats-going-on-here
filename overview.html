@@ -7,78 +7,67 @@
   <link rel="stylesheet" href="overview.css">
 </head>
 <body>
-  <div></div>
-  
-
   <div class="main-content">
     <div id="statusMessage" class="status-message"></div>
-    
-    <!-- Overview Content (hidden when in settings mode) -->
+    <div class="section-title activity-title">
+      Activity Overview
+      <button class="settings-btn" id="toggleSettings">Settings</button>
+    </div>
     <div id="overviewContent">
-      <!-- Date Selector -->
-      <div class="date-selector-section">
-        <div class="section-title">
-          Select Date
-          <button class="settings-btn" id="toggleSettings">Settings</button>
+      <div class="piebox">
+        <div class="date-selector-section">
+          <div class="date-selector-container">
+            <button class="date-nav-btn" id="prevDay">‹</button>
+            <div class="date-display" id="dateDisplay">Today</div>
+            <button class="date-nav-btn" id="nextDay">›</button>
+            <input type="date" id="datePicker" class="date-picker">
+          </div>
         </div>
-        <div class="date-selector-container">
-          <button class="date-nav-btn" id="prevDay">‹</button>
-          <div class="date-display" id="dateDisplay">Today</div>
-          <button class="date-nav-btn" id="nextDay">›</button>
-          <input type="date" id="datePicker" class="date-picker">
+
+        <div class="visualization-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="todayTotal">0h 0m</div>
+            <div class="stat-label" id="totalLabel">Total Time</div>
+            <div class="last">
+              <div class="stat-value" id="micro">0</div>
+              <div class="stat-label" id="microLabel">Microflicks</div>
+            </div>
+          </div>
+          <div class="visualization-section">
+            <div class="chart-container pie-chart-container item2">
+              <div class="chart-placeholder" id="pieChartPlaceholder">
+                <div class="loading-spinner"></div>
+                <div style="margin-top: 12px;">Loading pie chart...</div>
+              </div>
+              <canvas id="pieChart" style="display: none;"></canvas>
+            </div>
+          </div>
+          <div class="stat-card">
+            <!-- This will be changed to coins earned -->
+            <div class="stat-value" id="sitesVisited">0</div>
+            <div class="stat-label">Sites Visited</div>
+            <div class="last">
+              <div class="stat-value" id="productiveTime">0h 0m</div>
+              <div class="stat-label" id="productiveTimeLabel">Productive Time</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      
-      
-      <!-- Stats Overview -->
-      <div class="stats-overview">
-        <div class="stat-card">
-          <div class="stat-value" id="todayTotal">0h 0m</div>
-          <div class="stat-label" id="totalLabel">Total Time</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" id="sitesVisited">0</div>
-          <div class="stat-label">Sites Visited</div>
-        </div>
-      </div>
-
-      <!-- Visualizations Grid -->
-      <div class="visualization-grid">
-        <!-- Pie Chart Section -->
-        <div class="visualization-section">
-          <div class="section-title">
-            <span>🍰</span> Time Distribution
+      <div class="visualization-section">
+        <div class="section-title timeline">Daily Timeline</div>
+        <div class="chart-container schedule-container">
+          <div class="chart-placeholder" id="schedulePlaceholder">
+            <div class="loading-spinner"></div>
+            <div style="margin-top: 12px;">Loading timeline...</div>
           </div>
-          <div class="chart-container pie-chart-container">
-            <div class="chart-placeholder" id="pieChartPlaceholder">
-              <div class="loading-spinner"></div>
-              <div style="margin-top: 12px;">Loading pie chart...</div>
-            </div>
-            <canvas id="pieChart" style="display: none;"></canvas>
-          </div>
-        </div>
-
-        <!-- Block Schedule Section -->
-        <div class="visualization-section">
-          <div class="section-title">
-            <span>📅</span> Daily Timeline
-          </div>
-          <div class="chart-container schedule-container">
-            <div class="chart-placeholder" id="schedulePlaceholder">
-              <div class="loading-spinner"></div>
-              <div style="margin-top: 12px;">Loading timeline...</div>
-            </div>
-            <div id="blockSchedule" style="display: none;"></div>
-          </div>
+          <div id="blockSchedule" style="display: none;"></div>
         </div>
       </div>
     </div>
-
-    <!-- Settings Content (shown when in settings mode) -->
+    
+    <!-- Shown when in settings mode -->
     <div id="settingsContent" style="display: none;">
-      <!-- Website Blocking Section -->
-
         <!-- Blocking Rules Section -->
         <div class="blocking-section" id="blockingRulesSection">
           <div class="section-title">Blocking Rules</div>
@@ -152,9 +141,8 @@
       <!-- Extension Settings Panel -->
       <div class="settings-panel active" id="settingsPanel">
         <div class="section-title">
-          <span>⚙️</span> Extension Settings
+          Extension Settings
         </div>
-  <!-- Removed Reset All and Save Settings buttons -->
         <div class="form-group">
           <label class="form-label">Developer Tools</label>
           <button type="button" id="resetSession" class="btn btn-secondary" style="width: 100%;">
