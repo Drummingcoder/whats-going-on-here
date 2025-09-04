@@ -1,15 +1,13 @@
-// Track open Chrome windows
 let openWindowCount = 0;
 
-// Track device state and last activity
+// last activity
 let lastActivityTimestamp = Date.now();
-let deviceSleepThreshold = 5 * 60 * 1000; // 5 minutes
 let isDeviceAsleep = false;
 let heartbeatInterval = null;
 
 // Session timeout management
-let sessionTimeoutThreshold = 5 * 60 * 1000; // 5 minutes
-let sessionHardLimit = 12 * 60 * 60 * 1000; // 12 hours
+let sessionTimeout = 300000; // 5 minutes
+let sessionHardLimit = 43200000; // 12 hours
 let sessionTimeoutId = null;
 let sessionHardLimitId = null;
 let lastSessionActivity = Date.now();
@@ -22,7 +20,7 @@ let activeDomain = null;
 let activeTitle = null;
 
 // Track active sessions by tab ID
-let activeSessionsByTab = new Map(); // tabId -> { domain, startTime, title }
+let activeSessionsByTab = new Map();
 
 /* Event Listeners */
 chrome.runtime.onInstalled.addListener(() => {
@@ -64,85 +62,58 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// Initialize window count on startup
 chrome.windows.getAll({}, (windows) => {
   openWindowCount = windows.length;
 
-  // On startup, check for a gap since last heartbeat to infer device offline
   chrome.storage.local.get(['lastHeartbeat'], (result) => {
     const lastHeartbeat = result.lastHeartbeat || Date.now();
-    const now = Date.now();
-    const timeSinceLastHeartbeat = now - lastHeartbeat;
-    // If more than deviceSleepThreshold has passed, infer device was offline
-    if (timeSinceLastHeartbeat > deviceSleepThreshold) {
-      logEvent('device_offline_inferred', null, null, lastHeartbeat + deviceSleepThreshold);
+    if (Date.now() - lastHeartbeat > sessionTimeout) {
+      logEvent('device_offline_inferred', null, null, lastHeartbeat + sessionTimeout);
 
       // Issue a device_shutdown event and stop tracking 5 minutes after the last heartbeat
-      const shutdownTimestamp = lastHeartbeat + deviceSleepThreshold;
+      const shutdownTimestamp = lastHeartbeat + sessionTimeout;
       chrome.storage.local.get(['persistedSession'], (result) => {
         const persisted = result.persistedSession;
         if (persisted && persisted.domain) {
-          // Log device_shutdown event at the shutdown timestamp
           logEvent('device_shutdown', persisted.domain, persisted.title, shutdownTimestamp);
           stopTracking();
         }
       });
     }
-    // Continue with normal wakeup and heartbeat logic
     updateActivity();
     startHeartbeat();
-    
-    // Add missing end_of_day events for previous dates
     addEndOfDayEvents();
   });
   
-  // Check for pending blocking updates
   chrome.storage.sync.get(['pendingBlockingUpdate'], (result) => {
     if (result.pendingBlockingUpdate) {
       console.log('Found pending blocking update, applying now');
       updateBlockingRules(result.pendingBlockingUpdate, (success, error) => {
         if (success) {
-          console.log('Applied pending blocking rules successfully');
           chrome.storage.sync.remove(['pendingBlockingUpdate']);
         } else {
           console.error('Failed to apply pending blocking rules:', error);
         }
       });
     } else {
-      // Normal initialization
       initializeBlockingRules();
     }
   });
   
-  // Initialize tracking for currently active tab
   initializeActiveTabTracking();
 }
 );
 
-// Log browser startup event
 chrome.runtime.onStartup.addListener(() => {
-  updateActivity(); // Mark activity
+  updateActivity();
   logEvent('browser_startup');
   startHeartbeat();
   initializeBlockingRules();
   initializeActiveTabTracking();
 });
 
-// Initialize tracking for the currently active tab on startup
-function initializeActiveTabTracking() {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (tabs.length > 0) {
-      const tab = tabs[0];
-      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
-        console.log('Initializing tracking for active tab on startup:', tab.id, tab.url);
-        startTracking(tab.id, tab.url);
-      }
-    }
-  });
-}
-
 chrome.windows.onCreated.addListener(() => {
-  updateActivity(); // Mark activity
+  updateActivity();
   if (openWindowCount === 0) {
     logEvent('browser_opened');
   }
@@ -150,10 +121,10 @@ chrome.windows.onCreated.addListener(() => {
 });
 
 chrome.windows.onRemoved.addListener(() => {
-  updateActivity(); // Mark activity
+  updateActivity();
   openWindowCount--;
   if (openWindowCount <= 0) {
-    stopTracking(); // Properly close out the last active page
+    stopTracking();
     logEvent('browser_closed');
     openWindowCount = 0;
   }
@@ -169,9 +140,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  // Provide current active session info for popup
   if (request.action === "getActiveSessionInfo") {
-    // Return the current active tab's domain, activeStartTime, and title (if any)
     if (activeDomain && activeStartTime) {
       sendResponse({
         domain: activeDomain,
@@ -184,10 +153,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // Provide session info for a specific tab (for popup)
-  if (request.action === "getTabSessionInfo" && request.tabId) {
+    if (request.action === "getEventLog") {
+    chrome.storage.local.get(['eventLog'], (result) => {
+      sendResponse({
+        eventLog: result.eventLog || {}
+      });
+    });
+    return true;
+  }
+
+  if (request.action === "getTabSessionInfo" && request.tabId) { //to be fixed
     const session = activeSessionsByTab.get(request.tabId);
-    console.log('Popup requested session info for tab', request.tabId, 'found:', session);
     
     if (session) {
       sendResponse({
@@ -196,10 +172,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         title: session.title
       });
     } else {
-      // If no session found, but this is the active tab, use current active session data
       if (request.tabId === activeTabId && activeDomain && activeStartTime) {
-        console.log('Using active session data as fallback');
-        // Add this session to our map for future requests
         activeSessionsByTab.set(request.tabId, {
           domain: activeDomain,
           startTime: activeStartTime,
@@ -217,50 +190,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  // Handle page visibility changes from content scripts
+  // Handle content script messages
   if (request.action === "pageVisibilityChanged") {
-    updateActivity(); // Mark activity
+    updateActivity();
     const domain = getDomainFromUrl(request.url);
     if (domain && domain === activeDomain) {
       if (request.hidden) {
-        // Page became hidden - user likely switched away from Chrome
         logEvent('page_hidden', domain, activeTitle);
       } else {
-        // Page became visible - user likely switched back to Chrome
         logEvent('page_visible', domain, activeTitle);
       }
     }
     return true;
   }
-  
-  // Handle extended inactivity from content scripts
   if (request.action === "extendedInactivity") {
     const domain = getDomainFromUrl(request.url);
     if (domain && domain === activeDomain) {
       logEvent('extended_inactivity', domain, activeTitle, request.timestamp);
-      // Don't mark as activity - this indicates lack of activity
     }
     return true;
   }
-  
-  // Handle user activity from content scripts
-  if (request.action === "userActivity") {
-    updateActivity(); // Mark activity and reset session timeout
-    return true;
-  }
-  
-  // Handle window focus/blur from content scripts
   if (request.action === "windowFocus") {
-    updateActivity(); // Mark activity
+    updateActivity();
     const domain = getDomainFromUrl(request.url);
     if (domain && domain === activeDomain) {
       logEvent('window_focus', domain, activeTitle);
     }
     return true;
-  }
-  
+  }  
   if (request.action === "windowBlur") {
-    updateActivity(); // Mark activity
+    updateActivity();
     const domain = getDomainFromUrl(request.url);
     if (domain && domain === activeDomain) {
       logEvent('window_blur', domain, activeTitle);
@@ -268,40 +227,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
-  // Handle blocking settings updates
   if (request.action === "updateBlockingRules") {
-    // Keep service worker alive during the operation
     const keepAlive = setInterval(() => {}, 25000);
     
     updateBlockingRules(request.settings, (success, error) => {
       clearInterval(keepAlive);
       sendResponse({ success: success, error: error });
-    });
-    return true; // Keep message channel open for async response
-  }
-  
-  if (request.action === "getTimeData") {
-    chrome.storage.local.get(['timeTracking'], (result) => {
-      sendResponse({
-        timeData: result.timeTracking || {}
-      });
-    });
-    return true;
-  }
-  
-  if (request.action === "getEventLog") {
-    chrome.storage.local.get(['eventLog'], (result) => {
-      sendResponse({
-        eventLog: result.eventLog || {}
-      });
-    });
-    return true;
-  }
-  
-  if (request.action === "debugBlockingRules") {
-    chrome.declarativeNetRequest.getDynamicRules((rules) => {
-      console.log('Current blocking rules:', rules);
-      sendResponse({ rules: rules });
     });
     return true;
   }
@@ -309,47 +240,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // Tab event listeners
 chrome.tabs.onActivated.addListener((activeInfo) => {
-  updateActivity(); // Mark activity
+  updateActivity();
   chrome.tabs.get(activeInfo.tabId, (tab) => {
     if (tab.url) {
       startTracking(tab.id, tab.url);
-    } else {
-      stopTracking();
     }
   });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  updateActivity(); // Mark activity
+  updateActivity();
   if (changeInfo.url && tabId === activeTabId) {
     startTracking(tabId, changeInfo.url);
   }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  updateActivity(); // Mark activity
+  updateActivity();
   if (tabId === activeTabId) {
     stopTracking();
   }
-  // Remove session tracking for this tab
   activeSessionsByTab.delete(tabId);
 });
 
 chrome.windows.onFocusChanged.addListener((windowId) => {
-  updateActivity(); // Mark activity
+  updateActivity();
   if (windowId === chrome.windows.WINDOW_ID_NONE) {
-    // Browser lost focus
     logEvent('browser_blur');
     if (activeDomain) {
       logEvent('tab_deactivated', activeDomain, activeTitle);
     }
-    // Clear active tracking but don't log tab_closed
     activeTabId = null;
     activeDomain = null;
     activeStartTime = null;
     activeTitle = null;
   } else {
-    // Browser gained focus
     logEvent('browser_focus');
     chrome.tabs.query({ active: true, windowId: windowId }, (tabs) => {
       if (tabs.length > 0 && tabs[0].url) {
@@ -372,11 +297,11 @@ function updateActivity() {
     const lastHeartbeat = result && typeof result.lastHeartbeat === 'number' ? result.lastHeartbeat : null;
     if (lastHeartbeat !== null) {
       const timeSinceLastHeartbeat = now - lastHeartbeat;
-      if (timeSinceLastHeartbeat > deviceSleepThreshold) {
+      if (timeSinceLastHeartbeat > sessionTimeout) {
         // Only issue shutdown if we had an active session
         const persisted = result && result.persistedSession ? result.persistedSession : null;
         if (persisted && typeof persisted === 'object' && persisted.domain) {
-          const shutdownTimestamp = lastHeartbeat + deviceSleepThreshold;
+          const shutdownTimestamp = lastHeartbeat + sessionTimeout;
           logEvent('device_shutdown', persisted.domain, persisted.title, shutdownTimestamp);
           chrome.storage.local.remove('persistedSession', () => {
             if (chrome.runtime && chrome.runtime.lastError) {
@@ -398,7 +323,7 @@ function updateActivity() {
     // Session inactivity (timeout)
     if (activeDomain && typeof lastSessionActivity === 'number') {
       const timeSinceLastSessionActivity = now - lastSessionActivity;
-      if (timeSinceLastSessionActivity > sessionTimeoutThreshold) {
+      if (timeSinceLastSessionActivity > sessionTimeout) {
         console.log('updateActivity: Session timeout detected');
         endSessionDueToInactivity();
       }
@@ -471,6 +396,18 @@ function logEvent(eventType, domain = null, title = null, timestamp = Date.now()
     eventLog[today].push(event);
     chrome.storage.local.set({ eventLog: eventLog });
     console.log('Event logged:', event);
+  });
+}
+
+function initializeActiveTabTracking() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs.length > 0) {
+      const tab = tabs[0];
+      if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        console.log('Initializing tracking for active tab on startup:', tab.id, tab.url);
+        startTracking(tab.id, tab.url);
+      }
+    }
   });
 }
 
@@ -635,13 +572,13 @@ function startHeartbeat() {
     }
 
     // Check for session timeout (if we have an active session)
-    if (activeDomain && timeSinceLastSessionActivity > sessionTimeoutThreshold) {
+    if (activeDomain && timeSinceLastSessionActivity > sessionTimeout) {
       console.log('Heartbeat detected session timeout');
       endSessionDueToInactivity();
     }
 
     // If it's been more than our threshold since last activity, device might be asleep
-    if (timeSinceLastActivity > deviceSleepThreshold && !isDeviceAsleep) {
+    if (timeSinceLastActivity > sessionTimeout && !isDeviceAsleep) {
       logEvent('device_sleep_inferred');
       isDeviceAsleep = true;
 
@@ -756,8 +693,8 @@ function endSessionDueToDay(reason = 'day_rollover', domain = null, title = null
 
 function endSessionDueToInactivity() {
   if (activeDomain) {
-    console.log(`Ending session for ${activeDomain} due to ${sessionTimeoutThreshold / 1000 / 60} minutes of inactivity`);
-    
+    console.log(`Ending session for ${activeDomain} due to ${sessionTimeout / 1000 / 60} minutes of inactivity`);
+
     // Log session end due to inactivity
     logEvent('session_timeout', activeDomain, activeTitle);
     
@@ -812,7 +749,7 @@ function resetSessionTimeout() {
     sessionTimeoutId = setTimeout(() => {
       console.log('Session timeout reached - ending session due to inactivity');
       endSessionDueToInactivity();
-    }, sessionTimeoutThreshold);
+    }, sessionTimeout);
   }
 }
 
