@@ -114,7 +114,7 @@ class SimplePopupManager {
           }
         }
         // Events that end a session for our target domain
-        else if (event.type === 'tab_deactivated' || event.type === 'tab_closed' || event.type === 'browser_blur' || event.type === 'page_hidden') {
+        else if (this.isSessionEndEvent(event.type)) {
           if (isInTargetSession) {
             // Session ended, reset
             currentSessionStart = null;
@@ -175,7 +175,7 @@ class SimplePopupManager {
       if (event.domain === targetDomain) {
         if (event.type === 'tab_activated' && !sessionStart) {
           sessionStart = event.timestamp;
-        } else if ((event.type === 'tab_deactivated' || event.type === 'tab_closed') && sessionStart) {
+        } else if (this.isSessionEndEvent(event.type) && sessionStart) {
           totalTime += event.timestamp - sessionStart;
           sessionStart = null;
         }
@@ -192,6 +192,18 @@ class SimplePopupManager {
     }
     
     return Math.floor(totalTime / 1000); // Return in seconds
+  }
+
+  isSessionEndEvent(eventType) {
+    return eventType === 'tab_deactivated' ||
+      eventType === 'tab_closed' ||
+      eventType === 'browser_blur' ||
+      eventType === 'page_hidden' ||
+      eventType === 'session_timeout' ||
+      eventType === 'session_hard_limit' ||
+      eventType === 'session_day_rollover' ||
+      eventType === 'end_of_day' ||
+      eventType === 'device_shutdown';
   }
 
   async getPastSessionTime(domain) {

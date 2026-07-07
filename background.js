@@ -65,21 +65,7 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.windows.getAll({}, (windows) => {
   openWindowCount = windows.length;
 
-  chrome.storage.local.get(['lastHeartbeat'], (result) => {
-    const lastHeartbeat = result.lastHeartbeat || Date.now();
-    if (Date.now() - lastHeartbeat > sessionTimeout) {
-      logEvent('device_offline_inferred', null, null, lastHeartbeat + sessionTimeout);
-
-      // Issue a device_shutdown event and stop tracking 5 minutes after the last heartbeat
-      const shutdownTimestamp = lastHeartbeat + sessionTimeout;
-      chrome.storage.local.get(['persistedSession'], (result) => {
-        const persisted = result.persistedSession;
-        if (persisted && persisted.domain) {
-          logEvent('device_shutdown', persisted.domain, persisted.title, shutdownTimestamp);
-          stopTracking();
-        }
-      });
-    }
+  chrome.storage.local.get(['lastHeartbeat'], () => {
     updateActivity();
     startHeartbeat();
     addEndOfDayEvents();
@@ -210,6 +196,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     return true;
   }
+  if (request.action === "userActivity") {
+    updateActivity();
+    return true;
+  }
   if (request.action === "windowFocus") {
     updateActivity();
     const domain = getDomainFromUrl(request.url);
@@ -296,20 +286,7 @@ function updateActivity() {
   chrome.storage.local.get(['lastHeartbeat', 'persistedSession'], (result) => {
     const lastHeartbeat = result && typeof result.lastHeartbeat === 'number' ? result.lastHeartbeat : null;
     if (lastHeartbeat !== null) {
-      const timeSinceLastHeartbeat = now - lastHeartbeat;
-      if (timeSinceLastHeartbeat > sessionTimeout) {
-        // Only issue shutdown if we had an active session
-        const persisted = result && result.persistedSession ? result.persistedSession : null;
-        if (persisted && typeof persisted === 'object' && persisted.domain) {
-          const shutdownTimestamp = lastHeartbeat + sessionTimeout;
-          logEvent('device_shutdown', persisted.domain, persisted.title, shutdownTimestamp);
-          chrome.storage.local.remove('persistedSession', () => {
-            if (chrome.runtime && chrome.runtime.lastError) {
-              console.warn('Failed to remove persistedSession:', chrome.runtime.lastError.message);
-            }
-          });
-        }
-      }
+      closeStaleSessionAfterHeartbeatGap(lastHeartbeat, now, result && result.persistedSession);
     }
     chrome.storage.local.set({ lastHeartbeat: now }, () => {
       if (chrome.runtime && chrome.runtime.lastError) {
@@ -396,6 +373,40 @@ function logEvent(eventType, domain = null, title = null, timestamp = Date.now()
     eventLog[today].push(event);
     chrome.storage.local.set({ eventLog: eventLog });
     console.log('Event logged:', event);
+  });
+}
+
+function closeStaleSessionAfterHeartbeatGap(lastHeartbeat, now, persistedSession) {
+  if (now - lastHeartbeat <= sessionTimeout) {
+    return;
+  }
+
+  const staleSession = persistedSession && persistedSession.domain ? persistedSession : {
+    domain: activeDomain,
+    title: activeTitle
+  };
+
+  if (!staleSession.domain) {
+    return;
+  }
+
+  const timeoutTimestamp = lastHeartbeat + sessionTimeout;
+  console.log('Closing stale session after heartbeat gap:', staleSession.domain);
+  logEvent('device_offline_inferred', null, null, timeoutTimestamp);
+  logEvent('session_timeout', staleSession.domain, staleSession.title, timeoutTimestamp);
+
+  activeTabId = null;
+  activeDomain = null;
+  activeStartTime = null;
+  activeTitle = null;
+  activeSessionsByTab.clear();
+  clearSessionTimeout();
+  clearSessionHardLimit();
+
+  chrome.storage.local.remove('persistedSession', () => {
+    if (chrome.runtime && chrome.runtime.lastError) {
+      console.warn('Failed to remove stale persistedSession:', chrome.runtime.lastError.message);
+    }
   });
 }
 
@@ -550,8 +561,18 @@ function startHeartbeat() {
     const timeSinceLastSessionActivity = now - lastSessionActivity;
     const currentDateString = (new Date()).toDateString();
 
-    // Log a heartbeat event every interval
-    updateActivity();
+    // Keep an alive marker without treating the heartbeat itself as user activity.
+    chrome.storage.local.get(['lastHeartbeat', 'persistedSession'], (result) => {
+      const lastHeartbeat = result && typeof result.lastHeartbeat === 'number' ? result.lastHeartbeat : null;
+      if (lastHeartbeat !== null) {
+        closeStaleSessionAfterHeartbeatGap(lastHeartbeat, now, result && result.persistedSession);
+      }
+      chrome.storage.local.set({ lastHeartbeat: now }, () => {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          console.warn('Failed to set lastHeartbeat:', chrome.runtime.lastError.message);
+        }
+      });
+    });
 
     // Check for any persisted session from a previous day
     chrome.storage.local.get(['persistedSession'], (result) => {
@@ -582,12 +603,9 @@ function startHeartbeat() {
       logEvent('device_sleep_inferred');
       isDeviceAsleep = true;
 
-      // Stop tracking current session
+      // Stop tracking current session; a later wake/focus should start a new session.
       if (activeDomain) {
-        logEvent('tab_deactivated', activeDomain, activeTitle);
-        // Clear session timeout since device is asleep
-        clearSessionTimeout();
-        // Don't clear variables - we want to resume when device wakes
+        endSessionDueToInactivity();
       }
     }
 
@@ -598,8 +616,6 @@ function startHeartbeat() {
       updateBlockingBasedOnSchedule();
     }
 
-    // Update last activity timestamp
-    lastActivityTimestamp = now;
   }, 30000); // Check every 30 seconds
 }
 
@@ -683,6 +699,7 @@ function endSessionDueToDay(reason = 'day_rollover', domain = null, title = null
     activeDomain = null;
     activeStartTime = null;
     activeTitle = null;
+    activeSessionsByTab.clear();
   }
   
   // Clear timeouts and persisted session
@@ -703,6 +720,7 @@ function endSessionDueToInactivity() {
     activeDomain = null;
     activeStartTime = null;
     activeTitle = null;
+    activeSessionsByTab.clear();
   }
   
   // Clear timeouts
@@ -725,6 +743,7 @@ function endSessionDueToHardLimit() {
     activeDomain = null;
     activeStartTime = null;
     activeTitle = null;
+    activeSessionsByTab.clear();
   }
   
   // Clear timeouts

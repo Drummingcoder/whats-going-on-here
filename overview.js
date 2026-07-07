@@ -285,6 +285,15 @@ class OverviewManager {
             duration: 0
           });
           break;
+        case 'device_offline_inferred':
+          sessions.push({
+            domain: 'device-offline',
+            title: 'Device Offline (Inferred)',
+            startTime: event.timestamp,
+            endTime: event.timestamp,
+            duration: 0
+          });
+          break;
         case 'extended_inactivity':
           // Add as a point event (no duration)
           sessions.push({
@@ -332,6 +341,11 @@ class OverviewManager {
 
         case 'tab_deactivated':
         case 'tab_closed':
+        case 'session_timeout':
+        case 'session_hard_limit':
+        case 'session_day_rollover':
+        case 'end_of_day':
+        case 'device_shutdown':
           // End current tab session if it matches the event domain
           if (currentTabSession && currentTabSession.domain === event.domain) {
             currentTabSession.endTime = event.timestamp;
@@ -446,6 +460,7 @@ class OverviewManager {
       session.domain === 'browser-closed' ||
       session.domain === 'device-sleep' ||
       session.domain === 'device-wakeup' ||
+      session.domain === 'device-offline' ||
       session.domain === 'extended-inactivity'
     ); // Filter out very short sessions, but always include browser open/close events and device state events
   }
@@ -710,6 +725,7 @@ class OverviewManager {
       'browser-closed': 'Browser Closed',
       'device-sleep': 'Device Sleep (Inferred)',
       'device-wakeup': 'Device Wakeup (Inferred)',
+      'device-offline': 'Device Offline (Inferred)',
       'extended-inactivity': 'Extended Inactivity'
     };
     return siteNames[domain] || domain;
@@ -799,6 +815,7 @@ class OverviewManager {
         `;
         if (session.domain === 'browser-startup' || session.domain === 'browser-closed' || 
             session.domain === 'device-sleep' || session.domain === 'device-wakeup' || 
+            session.domain === 'device-offline' ||
             session.domain === 'extended-inactivity') {
           sessionBlock.innerHTML = `
             <div style="font-weight: 500; color: #374151;">${displayName}</div>

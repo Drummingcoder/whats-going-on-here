@@ -10,6 +10,7 @@ try {
 }
 
 let lastActivityTime = Date.now();
+let lastActivityReportTime = 0;
 let activityCheckInterval = null;
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -55,7 +56,7 @@ function startActivityMonitoring() {
   }
   
   ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(eventType => {
-    document.addEventListener(eventType, () => { lastActivityTime = Date.now(); }, true);
+    document.addEventListener(eventType, recordUserActivity, true);
   });
   
 
@@ -82,7 +83,7 @@ function stopActivityMonitoring() {
   }
   
   ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart', 'click'].forEach(eventType => {
-    document.removeEventListener(eventType, () => { lastActivityTime = Date.now(); }, true);
+    document.removeEventListener(eventType, recordUserActivity, true);
   });
   
   if (activityCheckInterval) {
@@ -154,4 +155,20 @@ function safeSendMessage(message) { //to background script
     }
     console.error('Error sending message to background script:', error);
   }
+}
+
+function recordUserActivity() {
+  const now = Date.now();
+  lastActivityTime = now;
+
+  if (now - lastActivityReportTime < 30000) {
+    return;
+  }
+
+  lastActivityReportTime = now;
+  safeSendMessage({
+    action: 'userActivity',
+    url: window.location.href,
+    timestamp: now
+  });
 }
